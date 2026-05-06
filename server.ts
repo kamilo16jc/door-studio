@@ -24,12 +24,12 @@ const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN
 })
 
-// Storage para texturas subidas
+// Storage: /tmp en Vercel (efímero), ./uploads en local
+const uploadDir = process.env.VERCEL ? '/tmp/uploads' : path.join(process.cwd(), 'uploads')
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const dir = path.join(process.cwd(), 'uploads')
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-    cb(null, dir)
+    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true })
+    cb(null, uploadDir)
   },
   filename: (req, file, cb) => {
     const unique = Date.now() + '-' + Math.round(Math.random() * 1e9)
@@ -260,7 +260,12 @@ app.get('/api/health', (req, res) => {
   })
 })
 
-app.listen(PORT, () => {
-  console.log(`\n🚪 Door Studio Server corriendo en http://localhost:${PORT}`)
-  console.log(`   Replicate: ${process.env.REPLICATE_API_TOKEN ? '✓ API key detectada' : '✗ Sin API key'}`)
-})
+// Solo escucha en local — en Vercel se exporta como serverless function
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`\n🚪 Door Studio Server corriendo en http://localhost:${PORT}`)
+    console.log(`   Replicate: ${process.env.REPLICATE_API_TOKEN ? '✓ API key detectada' : '✗ Sin API key'}`)
+  })
+}
+
+export default app
