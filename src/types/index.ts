@@ -7,7 +7,7 @@ export type FinishType = 'mate' | 'satinado' | 'brillante'
 
 export type TextureStatus = 'original' | 'processing' | 'ready' | 'error'
 
-export type Tool = 'select' | 'rect' | 'square' | 'ellipse' | 'circle' | 'line' | 'arrow' | 'pen' | 'triangle' | 'diamond' | 'polygon' | 'freehand' | 'delete'
+export type Tool = 'select' | 'rect' | 'square' | 'ellipse' | 'circle' | 'line' | 'arrow' | 'pen' | 'triangle' | 'diamond' | 'polygon' | 'freehand' | 'curve' | 'delete'
 
 export type AppModule = 'tracer' | 'zones' | 'textures' | 'realism' | 'preview' | 'export'
 
@@ -15,7 +15,7 @@ export type AppModule = 'tracer' | 'zones' | 'textures' | 'realism' | 'preview' 
 export interface TracedShape {
   id: string
   moduleType: ModuleType
-  shapeType: 'rect' | 'ellipse' | 'line' | 'polygon' | 'freehand'
+  shapeType: 'rect' | 'ellipse' | 'line' | 'polygon' | 'freehand' | 'curve'
   x: number
   y: number
   width?: number

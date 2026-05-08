@@ -153,6 +153,51 @@ export function getFilterForZone(tipo: ZoneTipo, finish: FinishType): string {
   }
 }
 
+// ─── Catmull-Rom → SVG cubic bezier (para shapeType 'curve') ─────────────────
+function catmullRomToSVG(pts: number[], closed: boolean, ox: number, oy: number): string {
+  const n = pts.length / 2
+  if (n < 2) return ''
+
+  // Coordenadas trasladadas
+  const xs: number[] = []
+  const ys: number[] = []
+  for (let i = 0; i < n; i++) {
+    xs.push(pts[i * 2] + ox)
+    ys.push(pts[i * 2 + 1] + oy)
+  }
+
+  // Puntos fantasma en los extremos
+  let exX: number[], exY: number[]
+  if (closed) {
+    exX = [xs[n - 1], ...xs, xs[0], xs[1]]
+    exY = [ys[n - 1], ...ys, ys[0], ys[1]]
+  } else {
+    exX = [xs[0], ...xs, xs[n - 1]]
+    exY = [ys[0], ...ys, ys[n - 1]]
+  }
+
+  let d = `M ${xs[0].toFixed(2)} ${ys[0].toFixed(2)}`
+  const segments = closed ? n : n - 1
+
+  for (let i = 0; i < segments; i++) {
+    // exX/exY indices: [phantom-before=0, p0=1, p1=2, ... pn-1=n, phantom-after=n+1]
+    const p0x = exX[i],     p0y = exY[i]
+    const p1x = exX[i + 1], p1y = exY[i + 1]
+    const p2x = exX[i + 2], p2y = exY[i + 2]
+    const p3x = exX[i + 3], p3y = exY[i + 3]
+
+    const cp1x = (p1x + (p2x - p0x) / 6).toFixed(2)
+    const cp1y = (p1y + (p2y - p0y) / 6).toFixed(2)
+    const cp2x = (p2x - (p3x - p1x) / 6).toFixed(2)
+    const cp2y = (p2y - (p3y - p1y) / 6).toFixed(2)
+
+    d += ` C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${p2x.toFixed(2)} ${p2y.toFixed(2)}`
+  }
+
+  if (closed) d += ' Z'
+  return d
+}
+
 // ─── Genera el path SVG de una forma a partir de los datos del tracer ─────────
 export function shapeToSVGPath(shape: {
   shapeType: string
@@ -187,6 +232,10 @@ export function shapeToSVGPath(shape: {
       d += ` L ${pts[i] + ox} ${pts[i + 1] + oy}`
     }
     return shape.closed !== false ? d + ' Z' : d
+  }
+
+  if (shape.shapeType === 'curve' && shape.points && shape.points.length >= 4) {
+    return catmullRomToSVG(shape.points, shape.closed !== false, shape.x || 0, shape.y || 0)
   }
 
   return ''

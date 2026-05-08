@@ -82,11 +82,13 @@ const ShapeEl = React.forwardRef<Konva.Shape, {
       x={shape.x||0} y={shape.y||0}
       points={shape.points||[]} stroke={selected?'#2563eb':s.stroke} strokeWidth={sw}
       lineCap="round" lineJoin="round" {...common}/>
+  // curve usa Catmull-Rom tension 0.5; freehand 0.4; polygon 0
+  const tension = shape.shapeType === 'curve' ? 0.5 : shape.shapeType === 'freehand' ? 0.4 : 0
   return <Line ref={ref as React.RefObject<Konva.Line>}
     x={shape.x||0} y={shape.y||0}
     points={shape.points||[]} closed={shape.closed!==false} fill={s.fill}
     stroke={selected?'#2563eb':s.stroke} strokeWidth={sw}
-    tension={shape.shapeType==='freehand'?0.4:0}
+    tension={tension}
     lineCap="round" lineJoin="round" {...common}/>
 })
 
@@ -257,6 +259,7 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
   const RECT_TOOLS = ['rect','ellipse','square','circle']
   const DRAG_TOOLS = [...RECT_TOOLS,'arrow']
   const POLY_TOOLS = ['pen','triangle','diamond']
+  const CURVE_PEN_TOOLS = ['pen','curve']  // ambas usan polyPts
 
   const pos       = useCallback(() => stageRef.current?.getPointerPosition()||{x:0,y:0}, [])
   const nearFirst = useCallback((x:number,y:number) =>
@@ -302,7 +305,7 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
         const newIds: string[] = []
         copiedShapes.forEach(src => {
           const { id: _id, ...rest } = src
-          const usesPts = ['polygon','freehand','line'].includes(src.shapeType)
+          const usesPts = ['polygon','freehand','line','curve'].includes(src.shapeType)
           const pasted  = usesPts
             ? { ...rest, points: src.points?.map((v: number) => v + OFFSET) }
             : { ...rest, x: (src.x||0) + OFFSET, y: (src.y||0) + OFFSET }
@@ -320,7 +323,7 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
         const newIds: string[] = []
         todup.forEach(src => {
           const { id: _id, ...rest } = src
-          const usesPts = ['polygon','freehand','line'].includes(src.shapeType)
+          const usesPts = ['polygon','freehand','line','curve'].includes(src.shapeType)
           const dup = usesPts
             ? { ...rest, points: src.points?.map((v: number) => v + OFFSET) }
             : { ...rest, x: (src.x||0) + OFFSET, y: (src.y||0) + OFFSET }
@@ -394,10 +397,17 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
     if (activeTool === 'freehand' && isStage) {
       setDrawing(true); setFreePoints([x,y])
     }
-    if (POLY_TOOLS.includes(activeTool)) {
+    if (POLY_TOOLS.includes(activeTool) || CURVE_PEN_TOOLS.includes(activeTool)) {
       if (activeTool === 'pen') {
         if (polyPts.length>=6 && nearFirst(x,y)) {
           openPopup({ shapeType:'polygon', x:0,y:0, points:polyPts, closed:true })
+          setPolyPts([]); return
+        }
+        setPolyPts(p=>[...p,x,y])
+      }
+      if (activeTool === 'curve') {
+        if (polyPts.length>=6 && nearFirst(x,y)) {
+          openPopup({ shapeType:'curve', x:0,y:0, points:polyPts, closed:true })
           setPolyPts([]); return
         }
         setPolyPts(p=>[...p,x,y])
@@ -513,10 +523,18 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
   }
 
   const onStageDblClick = (e: Konva.KonvaEventObject<MouseEvent>) => {
-    if (activeTool !== 'line') return
-    if (lineChain.length < 6) return
-    openPopup({ shapeType:'polygon', x:0,y:0, points:[...lineChain], closed:true })
-    setLineChain([]); setTempShape(null); setDrawing(false)
+    if (activeTool === 'line') {
+      if (lineChain.length < 6) return
+      openPopup({ shapeType:'polygon', x:0,y:0, points:[...lineChain], closed:true })
+      setLineChain([]); setTempShape(null); setDrawing(false)
+      return
+    }
+    if (activeTool === 'curve' && polyPts.length >= 4) {
+      // Doble-click finaliza la curva (cerrada si hay ≥3 puntos, abierta si no)
+      const closed = polyPts.length >= 6
+      openPopup({ shapeType:'curve', x:0,y:0, points:[...polyPts], closed })
+      setPolyPts([])
+    }
   }
 
   // ── Preview shape mientras se dibuja ─────────────────────────────────────
@@ -539,7 +557,7 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
   // ── Transformer options ───────────────────────────────────────────────────
   const hasPolygon = selectedShapeIds.some(id => {
     const s = shapes.find(sh => sh.id === id)
-    return s && ['polygon','freehand','line'].includes(s.shapeType)
+    return s && ['polygon','freehand','line','curve'].includes(s.shapeType)
   })
   const multiSel = selectedShapeIds.length > 1
 
@@ -651,6 +669,28 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
                 fill={isFirst?(canClose?'#22c55e':'#3b82f6'):'#3b82f6'}
                 stroke="white" strokeWidth={1.5}/>
             })}
+
+            {/* Curve — preview suavizado con tensión Catmull-Rom */}
+            {activeTool==='curve' && polyPts.length>=2 && (
+              <Line
+                points={[...polyPts, mouse.x, mouse.y]}
+                stroke="#8b5cf6" strokeWidth={sw}
+                lineCap="round" lineJoin="round"
+                tension={0.5} listening={false}/>
+            )}
+            {activeTool==='curve' && polyPts.length>=2 && (
+              <Line
+                points={[polyPts[polyPts.length-2], polyPts[polyPts.length-1], mouse.x, mouse.y]}
+                stroke={canClose?'#22c55e':'#c4b5fd'} strokeWidth={1} dash={[4,4]} lineCap="round"/>
+            )}
+            {activeTool==='curve' && polyPts.map((_,i)=>{
+              if(i%2!==0) return null
+              const px=polyPts[i], py=polyPts[i+1], isFirst=i===0
+              return <Circle key={i} x={px} y={py}
+                radius={isFirst?(canClose?9:5):3.5}
+                fill={isFirst?(canClose?'#22c55e':'#8b5cf6'):'#8b5cf6'}
+                stroke="white" strokeWidth={1.5}/>
+            })}
           </Layer>
         </Stage>
 
@@ -663,6 +703,13 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
         {activeTool==='pen' && polyPts.length>0 && (
           <div className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-gray-900/80 text-white text-xs px-3 py-1.5 rounded-full pointer-events-none whitespace-nowrap">
             {canClose ? '🟢 Click para cerrar' : `${polyPts.length/2} puntos · Click en el primer punto (●) para cerrar`}
+          </div>
+        )}
+        {activeTool==='curve' && polyPts.length>0 && (
+          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-purple-900/80 text-white text-xs px-3 py-1.5 rounded-full pointer-events-none whitespace-nowrap">
+            {canClose
+              ? '🟢 Click para cerrar la curva'
+              : `${polyPts.length/2} pts · Click en ● para cerrar · Doble-click para finalizar abierta · ESC cancela`}
           </div>
         )}
         {activeTool==='line' && lineChain.length>0 && (

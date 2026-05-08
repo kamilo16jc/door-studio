@@ -5,7 +5,7 @@ import {
   MousePointer2, Square, Circle, Minus, Triangle,
   PenLine, Pencil, Trash2, RotateCcw, ImagePlus,
   ZoomIn, ZoomOut, Grid3X3, Diamond, ArrowRight,
-  RotateCw, FlipHorizontal, FlipVertical, Copy
+  RotateCw, FlipHorizontal, FlipVertical, Copy, Spline
 } from 'lucide-react'
 import AutoTracer from './AutoTracer'
 
@@ -47,9 +47,10 @@ const TOOL_GROUPS = [
     ]
   },
   {
-    label: 'Dibujo libre',
+    label: 'Curvas',
     tools: [
-      { id: 'freehand' as Tool, label: 'Lápiz libre', icon: <Pencil size={14}/> },
+      { id: 'curve'    as Tool, label: 'Arco / Curva', icon: <Spline size={14}/> },
+      { id: 'freehand' as Tool, label: 'Lápiz libre',  icon: <Pencil size={14}/> },
     ]
   },
 ]
@@ -67,6 +68,7 @@ const HINTS: Partial<Record<Tool, string>> = {
   triangle: 'Arrastra para dibujar un triángulo',
   diamond:  'Arrastra para dibujar un rombo',
   freehand: 'Mantén presionado y arrastra para dibujar libremente',
+  curve:    'Click para agregar puntos · La línea se suaviza automáticamente · Click en ● verde para cerrar · Doble-click para terminar',
 }
 
 interface Props {
@@ -260,7 +262,7 @@ export default function TracerToolbar({ showGrid, onToggleGrid, strokeWidth, onS
                 const newIds: string[] = []
                 selectedShapes.forEach(s => {
                   const { id: _id, ...rest } = s
-                  const usesPts = ['polygon','freehand','line'].includes(s.shapeType)
+                  const usesPts = ['polygon','freehand','line','curve'].includes(s.shapeType)
                   const dup = usesPts
                     ? { ...rest, points: s.points?.map((v: number) => v + OFFSET) }
                     : { ...rest, x: (s.x||0) + OFFSET, y: (s.y||0) + OFFSET }

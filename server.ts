@@ -4,7 +4,10 @@ import multer from 'multer'
 import path from 'path'
 import fs from 'fs'
 import Replicate from 'replicate'
-import potrace from 'potrace'
+
+// potrace usa binarios nativos — import lazy para no crashear en Vercel si no está disponible
+let _potrace: typeof import('potrace') | null = null
+try { _potrace = require('potrace') } catch { _potrace = null }
 
 // Cargar .env si existe
 const envPath = path.join(process.cwd(), '.env')
