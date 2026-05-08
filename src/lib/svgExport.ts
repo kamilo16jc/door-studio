@@ -29,6 +29,12 @@ function getShapeCenter(shape: TracedShape): { cx: number; cy: number } {
     for (let i = 0; i < shape.points.length; i += 2) { sx += shape.points[i]; sy += shape.points[i + 1] }
     return { cx: sx / n + (shape.x || 0), cy: sy / n + (shape.y || 0) }
   }
+  if (shape.shapeType === 'bezier' && (shape as any).nodes && (shape as any).nodes.length >= 2) {
+    const nodes = (shape as any).nodes as Array<{x:number;y:number}>
+    let sx = 0, sy = 0
+    nodes.forEach((n: {x:number;y:number}) => { sx += n.x; sy += n.y })
+    return { cx: sx / nodes.length + (shape.x || 0), cy: sy / nodes.length + (shape.y || 0) }
+  }
   return { cx: shape.x, cy: shape.y }
 }
 

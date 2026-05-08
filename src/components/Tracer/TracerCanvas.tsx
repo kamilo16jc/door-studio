@@ -1,8 +1,9 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react'
-import { Stage, Layer, Image as KonvaImage, Rect, Ellipse, Line, Circle, Transformer } from 'react-konva'
+import { Stage, Layer, Image as KonvaImage, Rect, Ellipse, Line, Circle, Transformer, Path } from 'react-konva'
 import Konva from 'konva'
 import { useTracerStore } from '../../store/tracerStore'
-import { TracedShape, ModuleType } from '../../types'
+import { TracedShape, ModuleType, BezierNode } from '../../types'
+import { bezierNodesToPath } from '../../lib/svgFilters'
 import useImage from 'use-image'
 
 const MOD_STYLE: Record<ModuleType, { stroke: string; fill: string }> = {
@@ -37,6 +38,17 @@ function getShapeBounds(s: TracedShape) {
       x1=Math.min(x1,s.points[i]+ox); x2=Math.max(x2,s.points[i]+ox)
       y1=Math.min(y1,s.points[i+1]+oy); y2=Math.max(y2,s.points[i+1]+oy)
     }
+    return { x1, y1, x2, y2 }
+  }
+  if (s.shapeType === 'bezier' && (s as any).nodes) {
+    const nodes = (s as any).nodes as BezierNode[]
+    let x1=Infinity, y1=Infinity, x2=-Infinity, y2=-Infinity
+    nodes.forEach(n => {
+      const check = (px: number, py: number) => { x1=Math.min(x1,px+ox); x2=Math.max(x2,px+ox); y1=Math.min(y1,py+oy); y2=Math.max(y2,py+oy) }
+      check(n.x, n.y)
+      if (n.handleIn)  check(n.handleIn.x,  n.handleIn.y)
+      if (n.handleOut) check(n.handleOut.x, n.handleOut.y)
+    })
     return { x1, y1, x2, y2 }
   }
   return { x1: ox, y1: oy, x2: ox, y2: oy }
@@ -82,6 +94,18 @@ const ShapeEl = React.forwardRef<Konva.Shape, {
       x={shape.x||0} y={shape.y||0}
       points={shape.points||[]} stroke={selected?'#2563eb':s.stroke} strokeWidth={sw}
       lineCap="round" lineJoin="round" {...common}/>
+  if (shape.shapeType === 'bezier' && (shape as any).nodes) {
+    const pathData = bezierNodesToPath((shape as any).nodes as BezierNode[], shape.closed !== false)
+    return <Path
+      ref={ref as React.RefObject<Konva.Path>}
+      x={shape.x||0} y={shape.y||0}
+      data={pathData}
+      fill={s.fill}
+      stroke={selected ? '#2563eb' : s.stroke}
+      strokeWidth={sw}
+      {...common}
+    />
+  }
   // curve usa Catmull-Rom tension 0.5; freehand 0.4; polygon 0
   const tension = shape.shapeType === 'curve' ? 0.5 : shape.shapeType === 'freehand' ? 0.4 : 0
   return <Line ref={ref as React.RefObject<Konva.Line>}
@@ -149,6 +173,12 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
   const [copiedShapes, setCopiedShapes] = useState<TracedShape[]>([])
   const [marquee,      setMarquee]      = useState<{x:number;y:number;w:number;h:number}|null>(null)
   const marqueeOrigin  = useRef<{x:number;y:number}|null>(null)
+
+  // ── Bezier pen state ──────────────────────────────────────────────────────
+  const [bezNodes,       setBezNodes]      = useState<BezierNode[]>([])
+  const [bezDragOrigin,  setBezDragOrigin] = useState<{x:number;y:number}|null>(null)
+  const [bezDragHandle,  setBezDragHandle] = useState<{x:number;y:number}|null>(null)
+  const bezDragOriginRef = useRef<{x:number;y:number}|null>(null)
 
   // Posiciones iniciales capturadas al empezar arrastre de grupo
   const dragInitPos = useRef(new Map<string, {x:number;y:number}>())
@@ -278,6 +308,7 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
         setPolyPts([]); setLineChain([]); setDragStart(null)
         setTempShape(null); setFreePoints([]); setDrawing(false); setSnapPt(null)
         marqueeOrigin.current = null; setMarquee(null)
+        setBezNodes([]); setBezDragOrigin(null); setBezDragHandle(null); bezDragOriginRef.current = null
         return
       }
 
@@ -373,6 +404,26 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
       return
     }
 
+    // ── Bezier pen tool ────────────────────────────────────────────────────────
+    if (activeTool === 'bezier') {
+      if (!isStage) return
+      const {x, y} = raw
+      // Check if closing path (near first node)
+      if (bezNodes.length >= 3) {
+        const first = bezNodes[0]
+        if (Math.hypot(first.x - x, first.y - y) < 14) {
+          openPopup({ shapeType: 'bezier', x: 0, y: 0, nodes: bezNodes, closed: true })
+          setBezNodes([]); setBezDragOrigin(null); setBezDragHandle(null)
+          bezDragOriginRef.current = null
+          return
+        }
+      }
+      bezDragOriginRef.current = { x, y }
+      setBezDragOrigin({ x, y })
+      setBezDragHandle(null)
+      return
+    }
+
     // ── Herramienta Línea: modo cadena ──────────────────────────────────────
     if (activeTool === 'line' && isStage) {
       let sx: number, sy: number
@@ -429,6 +480,19 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
       return
     }
 
+    // ── Bezier drag handle tracking ────────────────────────────────────────────
+    if (activeTool === 'bezier') {
+      const {x, y} = raw
+      setMouse({x, y}); setSnapPt(null)
+      if (bezDragOriginRef.current) {
+        const origin = bezDragOriginRef.current
+        if (Math.hypot(x - origin.x, y - origin.y) > 6) {
+          setBezDragHandle({x, y})
+        }
+      }
+      return
+    }
+
     if (activeTool === 'line') {
       let mx = raw.x, my = raw.y
       let sp: {x:number;y:number}|null = null
@@ -458,6 +522,24 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
         const inside = shapesRef.current.filter(s => shapeInBounds(s, m)).map(s => s.id)
         selectShapes(inside)
       }
+      return
+    }
+
+    // ── Bezier: commit node on mouse up ───────────────────────────────────────
+    if (activeTool === 'bezier' && bezDragOriginRef.current) {
+      const origin = bezDragOriginRef.current
+      const newNode: BezierNode = { x: origin.x, y: origin.y }
+      const handle = bezDragHandle
+      if (handle && Math.hypot(handle.x - origin.x, handle.y - origin.y) > 6) {
+        const dx = handle.x - origin.x
+        const dy = handle.y - origin.y
+        newNode.handleOut = { x: handle.x,            y: handle.y            }
+        newNode.handleIn  = { x: origin.x - dx, y: origin.y - dy }
+      }
+      setBezNodes(n => [...n, newNode])
+      bezDragOriginRef.current = null
+      setBezDragOrigin(null)
+      setBezDragHandle(null)
       return
     }
 
@@ -523,6 +605,13 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
   }
 
   const onStageDblClick = (e: Konva.KonvaEventObject<MouseEvent>) => {
+    if (activeTool === 'bezier' && bezNodes.length >= 2) {
+      const closed = bezNodes.length >= 3
+      openPopup({ shapeType: 'bezier', x: 0, y: 0, nodes: [...bezNodes], closed })
+      setBezNodes([]); setBezDragOrigin(null); setBezDragHandle(null)
+      bezDragOriginRef.current = null
+      return
+    }
     if (activeTool === 'line') {
       if (lineChain.length < 6) return
       openPopup({ shapeType:'polygon', x:0,y:0, points:[...lineChain], closed:true })
@@ -557,7 +646,7 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
   // ── Transformer options ───────────────────────────────────────────────────
   const hasPolygon = selectedShapeIds.some(id => {
     const s = shapes.find(sh => sh.id === id)
-    return s && ['polygon','freehand','line','curve'].includes(s.shapeType)
+    return s && ['polygon','freehand','line','curve','bezier'].includes(s.shapeType)
   })
   const multiSel = selectedShapeIds.length > 1
 
@@ -691,6 +780,74 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
                 fill={isFirst?(canClose?'#22c55e':'#8b5cf6'):'#8b5cf6'}
                 stroke="white" strokeWidth={1.5}/>
             })}
+
+            {/* ── Bezier pen preview ──────────────────────────────────────────── */}
+            {activeTool === 'bezier' && (() => {
+              const nearFirst = bezNodes.length >= 3 &&
+                Math.hypot(bezNodes[0].x - mouse.x, bezNodes[0].y - mouse.y) < 14
+
+              // Path of committed nodes + preview next segment
+              const previewNodes: BezierNode[] = bezDragOrigin
+                ? [...bezNodes, { x: bezDragOrigin.x, y: bezDragOrigin.y,
+                    handleIn: bezDragHandle
+                      ? { x: 2*bezDragOrigin.x - bezDragHandle.x, y: 2*bezDragOrigin.y - bezDragHandle.y }
+                      : undefined
+                  }]
+                : [...bezNodes, { x: mouse.x, y: mouse.y }]
+
+              const previewPath = previewNodes.length >= 2
+                ? bezierNodesToPath(previewNodes, false)
+                : ''
+
+              return <>
+                {/* Main path */}
+                {bezNodes.length >= 2 && (
+                  <Path data={bezierNodesToPath(bezNodes, false)}
+                    stroke="#f97316" strokeWidth={sw} fill="transparent"/>
+                )}
+                {/* Preview next segment */}
+                {previewPath && previewNodes.length >= 2 && (
+                  <Path data={previewPath}
+                    stroke={nearFirst ? '#22c55e' : '#fdba74'}
+                    strokeWidth={1} fill="transparent"
+                    dash={bezDragOrigin ? [] : [5, 3]}/>
+                )}
+                {/* Drag handle lines + circles */}
+                {bezDragOrigin && bezDragHandle && Math.hypot(bezDragHandle.x - bezDragOrigin.x, bezDragHandle.y - bezDragOrigin.y) > 6 && (
+                  <>
+                    <Line points={[
+                      2*bezDragOrigin.x - bezDragHandle.x, 2*bezDragOrigin.y - bezDragHandle.y,
+                      bezDragHandle.x, bezDragHandle.y
+                    ]} stroke="#f97316" strokeWidth={1.2} dash={[4,3]}/>
+                    <Circle x={bezDragHandle.x} y={bezDragHandle.y} radius={4} fill="#f97316" stroke="white" strokeWidth={1.5}/>
+                    <Circle x={2*bezDragOrigin.x - bezDragHandle.x} y={2*bezDragOrigin.y - bezDragHandle.y} radius={4} fill="#f97316" stroke="white" strokeWidth={1.5}/>
+                  </>
+                )}
+                {/* Pending node indicator */}
+                {bezDragOrigin && (
+                  <Circle x={bezDragOrigin.x} y={bezDragOrigin.y} radius={5} fill="#f97316" stroke="white" strokeWidth={2}/>
+                )}
+                {/* Node dots for committed nodes */}
+                {bezNodes.map((n, i) => {
+                  const isFirst = i === 0
+                  const close = isFirst && bezNodes.length >= 3 && Math.hypot(n.x - mouse.x, n.y - mouse.y) < 14
+                  return <React.Fragment key={i}>
+                    {n.handleOut && (
+                      <><Line points={[n.x, n.y, n.handleOut.x, n.handleOut.y]} stroke="#f97316" strokeWidth={0.8} dash={[3,2]} opacity={0.5}/>
+                      <Circle x={n.handleOut.x} y={n.handleOut.y} radius={3} fill="white" stroke="#f97316" strokeWidth={1.5}/></>
+                    )}
+                    {n.handleIn && (
+                      <><Line points={[n.x, n.y, n.handleIn.x, n.handleIn.y]} stroke="#f97316" strokeWidth={0.8} dash={[3,2]} opacity={0.5}/>
+                      <Circle x={n.handleIn.x} y={n.handleIn.y} radius={3} fill="white" stroke="#f97316" strokeWidth={1.5}/></>
+                    )}
+                    <Circle x={n.x} y={n.y}
+                      radius={isFirst ? (close ? 9 : 6) : 4}
+                      fill={isFirst ? (close ? '#22c55e' : '#f97316') : '#f97316'}
+                      stroke="white" strokeWidth={1.5}/>
+                  </React.Fragment>
+                })}
+              </>
+            })()}
           </Layer>
         </Stage>
 
@@ -710,6 +867,13 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
             {canClose
               ? '🟢 Click para cerrar la curva'
               : `${polyPts.length/2} pts · Click en ● para cerrar · Doble-click para finalizar abierta · ESC cancela`}
+          </div>
+        )}
+        {activeTool === 'bezier' && bezNodes.length > 0 && (
+          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-orange-900/80 text-white text-xs px-3 py-1.5 rounded-full pointer-events-none whitespace-nowrap">
+            {bezNodes.length >= 3 && Math.hypot(bezNodes[0].x - mouse.x, bezNodes[0].y - mouse.y) < 14
+              ? '🟢 Click para cerrar la forma'
+              : `${bezNodes.length} nodos · Click=recto · Click+arrastrar=curva · Doble-click para terminar · ESC cancela`}
           </div>
         )}
         {activeTool==='line' && lineChain.length>0 && (

@@ -1,4 +1,4 @@
-import { RealismSettings, ZoneTipo, FinishType } from '../types'
+import { RealismSettings, ZoneTipo, FinishType, BezierNode } from '../types'
 
 // ─── Genera los SVG <defs> con todos los filtros de realismo ──────────────────
 export function buildSVGFilters(realism: RealismSettings): string {
@@ -153,6 +153,38 @@ export function getFilterForZone(tipo: ZoneTipo, finish: FinishType): string {
   }
 }
 
+// ─── Bezier nodes → SVG cubic bezier path ─────────────────────────────────────
+export function bezierNodesToPath(
+  nodes: BezierNode[],
+  closed: boolean,
+  ox = 0,
+  oy = 0
+): string {
+  if (nodes.length < 2) return ''
+  const X = (v: number) => (v + ox).toFixed(2)
+  const Y = (v: number) => (v + oy).toFixed(2)
+  let d = `M ${X(nodes[0].x)} ${Y(nodes[0].y)}`
+  const n = nodes.length
+  const segs = closed ? n : n - 1
+  for (let i = 0; i < segs; i++) {
+    const from = nodes[i]
+    const to   = nodes[(i + 1) % n]
+    const c1   = from.handleOut
+    const c2   = to.handleIn
+    if (c1 || c2) {
+      const cp1x = c1 ? X(c1.x) : X(from.x)
+      const cp1y = c1 ? Y(c1.y) : Y(from.y)
+      const cp2x = c2 ? X(c2.x) : X(to.x)
+      const cp2y = c2 ? Y(c2.y) : Y(to.y)
+      d += ` C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${X(to.x)} ${Y(to.y)}`
+    } else {
+      d += ` L ${X(to.x)} ${Y(to.y)}`
+    }
+  }
+  if (closed) d += ' Z'
+  return d
+}
+
 // ─── Catmull-Rom → SVG cubic bezier (para shapeType 'curve') ─────────────────
 function catmullRomToSVG(pts: number[], closed: boolean, ox: number, oy: number): string {
   const n = pts.length / 2
@@ -208,6 +240,7 @@ export function shapeToSVGPath(shape: {
   radiusX?: number
   radiusY?: number
   points?: number[]
+  nodes?: any[]
   closed?: boolean
 }): string {
   if (shape.shapeType === 'rect' && shape.width && shape.height) {
@@ -236,6 +269,15 @@ export function shapeToSVGPath(shape: {
 
   if (shape.shapeType === 'curve' && shape.points && shape.points.length >= 4) {
     return catmullRomToSVG(shape.points, shape.closed !== false, shape.x || 0, shape.y || 0)
+  }
+
+  if (shape.shapeType === 'bezier' && shape.nodes && shape.nodes.length >= 2) {
+    return bezierNodesToPath(
+      shape.nodes as BezierNode[],
+      shape.closed !== false,
+      shape.x || 0,
+      shape.y || 0
+    )
   }
 
   return ''

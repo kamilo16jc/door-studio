@@ -5,9 +5,10 @@ import {
   MousePointer2, Square, Circle, Minus, Triangle,
   PenLine, Pencil, Trash2, RotateCcw, ImagePlus,
   ZoomIn, ZoomOut, Grid3X3, Diamond, ArrowRight,
-  RotateCw, FlipHorizontal, FlipVertical, Copy, Spline
+  RotateCw, FlipHorizontal, FlipVertical, Copy, Spline, Pen
 } from 'lucide-react'
 import AutoTracer from './AutoTracer'
+import { createTemplateShapes, DOOR_TEMPLATES } from '../../lib/doorTemplates'
 
 const TOOL_GROUPS = [
   {
@@ -49,8 +50,9 @@ const TOOL_GROUPS = [
   {
     label: 'Curvas',
     tools: [
-      { id: 'curve'    as Tool, label: 'Arco / Curva', icon: <Spline size={14}/> },
-      { id: 'freehand' as Tool, label: 'Lápiz libre',  icon: <Pencil size={14}/> },
+      { id: 'bezier'   as Tool, label: 'Pluma Bezier',  icon: <Pen    size={14}/> },
+      { id: 'curve'    as Tool, label: 'Arco / Curva',  icon: <Spline size={14}/> },
+      { id: 'freehand' as Tool, label: 'Lápiz libre',   icon: <Pencil size={14}/> },
     ]
   },
 ]
@@ -69,6 +71,7 @@ const HINTS: Partial<Record<Tool, string>> = {
   diamond:  'Arrastra para dibujar un rombo',
   freehand: 'Mantén presionado y arrastra para dibujar libremente',
   curve:    'Click para agregar puntos · La línea se suaviza automáticamente · Click en ● verde para cerrar · Doble-click para terminar',
+  bezier:   'Click = punto recto · Click+arrastrar = curva con manijas Bezier · Click en ● verde para cerrar · Doble-click para terminar',
 }
 
 interface Props {
@@ -308,6 +311,37 @@ export default function TracerToolbar({ showGrid, onToggleGrid, strokeWidth, onS
             <p className="text-xs text-blue-600 leading-relaxed">{HINTS[activeTool]}</p>
           </div>
         )}
+      </section>
+
+      <div className="border-t border-gray-100"/>
+
+      {/* Plantillas */}
+      <section>
+        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Plantillas</p>
+        <div className="grid grid-cols-2 gap-1">
+          {DOOR_TEMPLATES.map(tmpl => (
+            <button
+              key={tmpl.id}
+              title={tmpl.label}
+              onClick={() => {
+                const { canvasWidth, canvasHeight } = useTracerStore.getState()
+                const shapes = createTemplateShapes(tmpl.id, canvasWidth, canvasHeight)
+                const ids: string[] = []
+                shapes.forEach(s => {
+                  ids.push(useTracerStore.getState().addShape(s))
+                })
+                useTracerStore.getState().selectShapes(ids)
+                useTracerStore.getState().setActiveTool('select')
+              }}
+              className="flex flex-col items-center gap-1 p-2 border border-gray-200 rounded-lg hover:bg-orange-50 hover:border-orange-200 transition-all group"
+            >
+              <svg width="40" height="28" viewBox="0 0 40 28" className="text-gray-500 group-hover:text-orange-500">
+                <path d={tmpl.icon} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
+              </svg>
+              <span className="text-xs text-gray-500 group-hover:text-orange-600 leading-tight text-center">{tmpl.label}</span>
+            </button>
+          ))}
+        </div>
       </section>
 
       <div className="border-t border-gray-100"/>

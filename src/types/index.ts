@@ -7,15 +7,23 @@ export type FinishType = 'mate' | 'satinado' | 'brillante'
 
 export type TextureStatus = 'original' | 'processing' | 'ready' | 'error'
 
-export type Tool = 'select' | 'rect' | 'square' | 'ellipse' | 'circle' | 'line' | 'arrow' | 'pen' | 'triangle' | 'diamond' | 'polygon' | 'freehand' | 'curve' | 'delete'
+export type Tool = 'select' | 'rect' | 'square' | 'ellipse' | 'circle' | 'line' | 'arrow' | 'pen' | 'triangle' | 'diamond' | 'polygon' | 'freehand' | 'curve' | 'bezier' | 'delete'
 
 export type AppModule = 'tracer' | 'zones' | 'textures' | 'realism' | 'preview' | 'export'
+
+// ─── Nodo Bezier ──────────────────────────────────────────────────────────────
+export interface BezierNode {
+  x: number
+  y: number
+  handleIn?:  { x: number; y: number }
+  handleOut?: { x: number; y: number }
+}
 
 // ─── Formas trazadas ──────────────────────────────────────────────────────────
 export interface TracedShape {
   id: string
   moduleType: ModuleType
-  shapeType: 'rect' | 'ellipse' | 'line' | 'polygon' | 'freehand' | 'curve'
+  shapeType: 'rect' | 'ellipse' | 'line' | 'polygon' | 'freehand' | 'curve' | 'bezier'
   x: number
   y: number
   width?: number
@@ -23,6 +31,7 @@ export interface TracedShape {
   radiusX?: number
   radiusY?: number
   points?: number[]
+  nodes?: BezierNode[]
   fill: string
   stroke: string
   strokeWidth: number
