@@ -63,19 +63,20 @@ const ShapeEl = React.forwardRef<Konva.Shape, {
   shape: TracedShape
   selected: boolean
   onSelect: (e: Konva.KonvaEventObject<MouseEvent>) => void
-  onDelete: () => void
+  onEditNodes: () => void
+  opacity?: number
   strokeWidth: number
   onDragStart: (e: Konva.KonvaEventObject<DragEvent>) => void
   onDragMove:  (e: Konva.KonvaEventObject<DragEvent>) => void
   onDragEnd:   (e: Konva.KonvaEventObject<DragEvent>) => void
-}>(function ShapeEl({ shape, selected, onSelect, onDelete, strokeWidth, onDragStart, onDragMove, onDragEnd }, ref) {
+}>(function ShapeEl({ shape, selected, onSelect, onEditNodes, opacity, strokeWidth, onDragStart, onDragMove, onDragEnd }, ref) {
   const s  = MOD_STYLE[shape.moduleType]
   const sw = selected ? Math.max(strokeWidth, 2) : strokeWidth
   const common = {
     id: shape.id,
     draggable: true,
     onClick:    onSelect,
-    onDblClick: onDelete,
+    onDblClick: onEditNodes,
     rotation:   shape.rotation || 0,
     onDragStart,
     onDragMove,
@@ -84,16 +85,18 @@ const ShapeEl = React.forwardRef<Konva.Shape, {
   if (shape.shapeType === 'rect')
     return <Rect ref={ref as React.RefObject<Konva.Rect>}
       x={shape.x} y={shape.y} width={shape.width||0} height={shape.height||0}
-      fill={s.fill} stroke={selected?'#2563eb':s.stroke} strokeWidth={sw} {...common}/>
+      fill={s.fill} stroke={selected?'#2563eb':s.stroke} strokeWidth={sw}
+      opacity={opacity ?? 1} {...common}/>
   if (shape.shapeType === 'ellipse')
     return <Ellipse ref={ref as React.RefObject<Konva.Ellipse>}
       x={shape.x} y={shape.y} radiusX={shape.radiusX||50} radiusY={shape.radiusY||50}
-      fill={s.fill} stroke={selected?'#2563eb':s.stroke} strokeWidth={sw} {...common}/>
+      fill={s.fill} stroke={selected?'#2563eb':s.stroke} strokeWidth={sw}
+      opacity={opacity ?? 1} {...common}/>
   if (shape.shapeType === 'line')
     return <Line ref={ref as React.RefObject<Konva.Line>}
       x={shape.x||0} y={shape.y||0}
       points={shape.points||[]} stroke={selected?'#2563eb':s.stroke} strokeWidth={sw}
-      lineCap="round" lineJoin="round" {...common}/>
+      lineCap="round" lineJoin="round" opacity={opacity ?? 1} {...common}/>
   if (shape.shapeType === 'bezier' && (shape as any).nodes) {
     const pathData = bezierNodesToPath((shape as any).nodes as BezierNode[], shape.closed !== false)
     return <Path
@@ -103,6 +106,7 @@ const ShapeEl = React.forwardRef<Konva.Shape, {
       fill={s.fill}
       stroke={selected ? '#2563eb' : s.stroke}
       strokeWidth={sw}
+      opacity={opacity ?? 1}
       {...common}
     />
   }
@@ -113,8 +117,209 @@ const ShapeEl = React.forwardRef<Konva.Shape, {
     points={shape.points||[]} closed={shape.closed!==false} fill={s.fill}
     stroke={selected?'#2563eb':s.stroke} strokeWidth={sw}
     tension={tension}
-    lineCap="round" lineJoin="round" {...common}/>
+    lineCap="round" lineJoin="round" opacity={opacity ?? 1} {...common}/>
 })
+
+// ─── Polygon/Curve/Freehand node editor ──────────────────────────────────────
+function PolyNodeEditor({ shape, updateShape, onClose }: {
+  shape: TracedShape
+  updateShape: (id: string, u: Partial<TracedShape>) => void
+  onClose: () => void
+}) {
+  const ox = shape.x || 0, oy = shape.y || 0
+  const s  = MOD_STYLE[shape.moduleType]
+  const tension = shape.shapeType === 'curve' ? 0.5 : shape.shapeType === 'freehand' ? 0.4 : 0
+  const pts   = shape.points || []
+  const count = Math.floor(pts.length / 2)
+
+  return <>
+    {/* Click-trap BEHIND nodes: click outside any node to exit */}
+    <Rect x={-9999} y={-9999} width={99999} height={99999}
+      fill="transparent" onClick={onClose} onTap={onClose}/>
+
+    {/* Live shape preview */}
+    <Line x={0} y={0}
+      points={pts.map((v, i) => i % 2 === 0 ? v + ox : v + oy)}
+      closed={shape.closed !== false}
+      fill={s.fill} stroke={s.stroke} strokeWidth={2.5}
+      tension={tension} listening={false}/>
+
+    {/* Draggable node circles */}
+    {Array.from({ length: count }, (_, i) => {
+      const nx = pts[i * 2] + ox
+      const ny = pts[i * 2 + 1] + oy
+      return (
+        <Circle key={i} x={nx} y={ny}
+          radius={7} fill="white" stroke="#3b82f6" strokeWidth={2.5}
+          shadowBlur={6} shadowColor="rgba(59,130,246,0.35)"
+          draggable
+          onDragMove={e => {
+            const cur = useTracerStore.getState().shapes.find(sh => sh.id === shape.id)
+            if (!cur?.points) return
+            const newPts = [...cur.points]
+            newPts[i * 2]     = e.target.x() - ox
+            newPts[i * 2 + 1] = e.target.y() - oy
+            updateShape(shape.id, { points: newPts })
+          }}
+          onDblClick={e => {
+            e.cancelBubble = true
+            const cur = useTracerStore.getState().shapes.find(sh => sh.id === shape.id)
+            if (!cur?.points || cur.points.length / 2 <= 3) return
+            const newPts = [...cur.points]
+            newPts.splice(i * 2, 2)
+            updateShape(shape.id, { points: newPts })
+          }}
+          onClick={e => { e.cancelBubble = true }}
+        />
+      )
+    })}
+  </>
+}
+
+// ─── Bezier node editor ───────────────────────────────────────────────────────
+function BezierNodeEditor({ shape, updateShape, onClose }: {
+  shape: TracedShape
+  updateShape: (id: string, u: Partial<TracedShape>) => void
+  onClose: () => void
+}) {
+  const ox    = shape.x || 0, oy = shape.y || 0
+  const s     = MOD_STYLE[shape.moduleType]
+  const nodes = (shape as any).nodes as BezierNode[]
+  if (!nodes || nodes.length < 2) return null
+
+  const pathData = bezierNodesToPath(nodes, shape.closed !== false)
+
+  const updateNode = (i: number, patch: Partial<BezierNode>) => {
+    const cur = useTracerStore.getState().shapes.find(sh => sh.id === shape.id)
+    const curNodes = (cur as any)?.nodes as BezierNode[]
+    if (!curNodes) return
+    const newNodes = curNodes.map((n, idx) => idx === i ? { ...n, ...patch } : n)
+    updateShape(shape.id, { nodes: newNodes } as any)
+  }
+
+  return <>
+    {/* Click-trap */}
+    <Rect x={-9999} y={-9999} width={99999} height={99999}
+      fill="transparent" onClick={onClose} onTap={onClose}/>
+
+    {/* Live bezier shape preview */}
+    <Path x={ox} y={oy} data={pathData}
+      fill={s.fill} stroke={s.stroke} strokeWidth={2.5} listening={false}/>
+
+    {nodes.map((node, i) => {
+      const nx       = node.x + ox
+      const ny       = node.y + oy
+      const isSmooth = !!(node.handleIn || node.handleOut)
+
+      return (
+        <React.Fragment key={i}>
+          {/* Handle In line + diamond */}
+          {node.handleIn && <>
+            <Line points={[nx, ny, node.handleIn.x + ox, node.handleIn.y + oy]}
+              stroke="#f97316" strokeWidth={1.2} dash={[4, 3]} listening={false}/>
+            <Circle x={node.handleIn.x + ox} y={node.handleIn.y + oy}
+              radius={5} fill="#f97316" stroke="white" strokeWidth={2}
+              shadowBlur={4} shadowColor="rgba(249,115,22,0.4)"
+              draggable
+              onClick={e => { e.cancelBubble = true }}
+              onDragMove={e => {
+                const cur = useTracerStore.getState().shapes.find(sh => sh.id === shape.id)
+                const curNodes = (cur as any)?.nodes as BezierNode[]
+                if (!curNodes) return
+                const n   = curNodes[i]
+                const hiX = e.target.x() - ox
+                const hiY = e.target.y() - oy
+                updateNode(i, {
+                  handleIn:  { x: hiX, y: hiY },
+                  handleOut: { x: n.x - (hiX - n.x), y: n.y - (hiY - n.y) }
+                })
+              }}
+            />
+          </>}
+
+          {/* Handle Out line + diamond */}
+          {node.handleOut && <>
+            <Line points={[nx, ny, node.handleOut.x + ox, node.handleOut.y + oy]}
+              stroke="#f97316" strokeWidth={1.2} dash={[4, 3]} listening={false}/>
+            <Circle x={node.handleOut.x + ox} y={node.handleOut.y + oy}
+              radius={5} fill="#f97316" stroke="white" strokeWidth={2}
+              shadowBlur={4} shadowColor="rgba(249,115,22,0.4)"
+              draggable
+              onClick={e => { e.cancelBubble = true }}
+              onDragMove={e => {
+                const cur = useTracerStore.getState().shapes.find(sh => sh.id === shape.id)
+                const curNodes = (cur as any)?.nodes as BezierNode[]
+                if (!curNodes) return
+                const n   = curNodes[i]
+                const hoX = e.target.x() - ox
+                const hoY = e.target.y() - oy
+                updateNode(i, {
+                  handleOut: { x: hoX, y: hoY },
+                  handleIn:  { x: n.x - (hoX - n.x), y: n.y - (hoY - n.y) }
+                })
+              }}
+            />
+          </>}
+
+          {/* Node circle — click toggles smooth/corner, dblclick deletes */}
+          <Circle x={nx} y={ny}
+            radius={isSmooth ? 8 : 6}
+            fill={isSmooth ? '#f97316' : 'white'}
+            stroke={isSmooth ? 'white' : '#3b82f6'}
+            strokeWidth={2.5}
+            shadowBlur={6}
+            shadowColor={isSmooth ? 'rgba(249,115,22,0.4)' : 'rgba(59,130,246,0.35)'}
+            draggable
+            onClick={e => {
+              e.cancelBubble = true
+              const cur = useTracerStore.getState().shapes.find(sh => sh.id === shape.id)
+              const curNodes = (cur as any)?.nodes as BezierNode[]
+              if (!curNodes) return
+              const n = curNodes[i]
+              const hasHandles = !!(n.handleIn || n.handleOut)
+              if (hasHandles) {
+                // Remove handles → corner node
+                updateNode(i, { handleIn: undefined, handleOut: undefined })
+              } else {
+                // Add handles → smooth node based on adjacent nodes
+                const total = curNodes.length
+                const prev  = curNodes[(i - 1 + total) % total]
+                const next  = curNodes[(i + 1) % total]
+                const dx = (next.x - prev.x) * 0.2
+                const dy = (next.y - prev.y) * 0.2
+                updateNode(i, {
+                  handleOut: { x: n.x + dx, y: n.y + dy },
+                  handleIn:  { x: n.x - dx, y: n.y - dy }
+                })
+              }
+            }}
+            onDblClick={e => {
+              e.cancelBubble = true
+              const cur = useTracerStore.getState().shapes.find(sh => sh.id === shape.id)
+              const curNodes = (cur as any)?.nodes as BezierNode[]
+              if (!curNodes || curNodes.length <= 3) return
+              updateShape(shape.id, { nodes: curNodes.filter((_, idx) => idx !== i) } as any)
+            }}
+            onDragMove={e => {
+              const cur = useTracerStore.getState().shapes.find(sh => sh.id === shape.id)
+              const curNodes = (cur as any)?.nodes as BezierNode[]
+              if (!curNodes) return
+              const n  = curNodes[i]
+              const dx = e.target.x() - ox - n.x
+              const dy = e.target.y() - oy - n.y
+              updateNode(i, {
+                x: n.x + dx,
+                y: n.y + dy,
+                handleIn:  n.handleIn  ? { x: n.handleIn.x  + dx, y: n.handleIn.y  + dy } : undefined,
+                handleOut: n.handleOut ? { x: n.handleOut.x + dx, y: n.handleOut.y + dy } : undefined,
+              })
+            }}
+          />
+        </React.Fragment>
+      )
+    })}
+  </>
+}
 
 function AssignPopup({ x, y, onAssign, onCancel }: {
   x:number; y:number; onAssign:(m:ModuleType)=>void; onCancel:()=>void
@@ -169,6 +374,9 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
   const [popup,      setPopup]      = useState<{shape:any; sx:number; sy:number}|null>(null)
   const [snapPt,     setSnapPt]     = useState<{x:number;y:number}|null>(null)
 
+  // ── Node editor state ─────────────────────────────────────────────────────
+  const [editingShapeId, setEditingShapeId] = useState<string | null>(null)
+
   // ── Multi-select state ────────────────────────────────────────────────────
   const [copiedShapes, setCopiedShapes] = useState<TracedShape[]>([])
   const [marquee,      setMarquee]      = useState<{x:number;y:number;w:number;h:number}|null>(null)
@@ -182,6 +390,11 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
 
   // Posiciones iniciales capturadas al empezar arrastre de grupo
   const dragInitPos = useRef(new Map<string, {x:number;y:number}>())
+
+  // ── Exit node edit mode when tool changes ─────────────────────────────────
+  useEffect(() => {
+    setEditingShapeId(null)
+  }, [activeTool])
 
   // ── Sync Transformer con shapes seleccionadas ─────────────────────────────
   useEffect(() => {
@@ -305,6 +518,7 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
         document.activeElement instanceof HTMLTextAreaElement
 
       if (e.key === 'Escape') {
+        setEditingShapeId(null)
         setPolyPts([]); setLineChain([]); setDragStart(null)
         setTempShape(null); setFreePoints([]); setDrawing(false); setSnapPt(null)
         marqueeOrigin.current = null; setMarquee(null)
@@ -391,6 +605,7 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
 
   // ── Mouse Down ────────────────────────────────────────────────────────────
   const onMouseDown = (e: Konva.KonvaEventObject<MouseEvent>) => {
+    if (editingShapeId) return  // node editor handles all interaction
     if (activeTool === 'delete') return
     const isStage = e.target === stageRef.current
     const raw = pos()
@@ -599,6 +814,7 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
   }
 
   const onStageClick = (e: Konva.KonvaEventObject<MouseEvent>) => {
+    if (editingShapeId) return  // handled by node editor's click trap
     if (e.target === stageRef.current && activeTool === 'select') {
       if (!e.evt.shiftKey) selectShapes([])
     }
@@ -687,7 +903,11 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
                     selectShape(shape.id)
                   }
                 }}
-                onDelete={() => deleteShape(shape.id)}
+                onEditNodes={() => {
+                  selectShape(shape.id)
+                  setEditingShapeId(shape.id)
+                }}
+                opacity={editingShapeId && editingShapeId !== shape.id ? 0.3 : 1}
                 onDragStart={makeDragStart(shape)}
                 onDragMove={makeDragMove(shape)}
                 onDragEnd={makeDragEnd(shape)}
@@ -702,6 +922,32 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
               onTransformEnd={onTransformEnd}
             />
           </Layer>
+
+          {/* ── Node editor layer ─────────────────────────────────────────── */}
+          {editingShapeId && (() => {
+            const editShape = shapes.find(s => s.id === editingShapeId)
+            if (!editShape) return null
+            const canEdit = editShape.points?.length || (editShape as any).nodes?.length
+            if (!canEdit) return null
+            return (
+              <Layer>
+                {editShape.points && (
+                  <PolyNodeEditor
+                    shape={editShape}
+                    updateShape={updateShape}
+                    onClose={() => setEditingShapeId(null)}
+                  />
+                )}
+                {(editShape as any).nodes && (
+                  <BezierNodeEditor
+                    shape={editShape}
+                    updateShape={updateShape}
+                    onClose={() => setEditingShapeId(null)}
+                  />
+                )}
+              </Layer>
+            )
+          })()}
 
           <Layer listening={false}>
             {renderPreview()}
@@ -881,6 +1127,12 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
             {canCloseChain
               ? '🟢 Suelta aquí para cerrar la figura y asignar textura'
               : `${lineChain.length/2} puntos · Llega al ● verde para cerrar · Doble-click para cerrar aquí · ESC cancela`}
+          </div>
+        )}
+        {editingShapeId && (
+          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-emerald-900/85 text-white text-xs px-3 py-1.5 rounded-full pointer-events-none whitespace-nowrap flex items-center gap-2">
+            <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse inline-block"/>
+            Editando nodos · Arrastra nodos (●) o manijas (◆) · Click en nodo = curva/recto · Doble-click nodo = eliminar · ESC para salir
           </div>
         )}
       </div>
