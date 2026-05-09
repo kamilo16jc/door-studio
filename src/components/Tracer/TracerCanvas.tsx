@@ -126,23 +126,78 @@ function PolyNodeEditor({ shape, updateShape, onClose }: {
   updateShape: (id: string, u: Partial<TracedShape>) => void
   onClose: () => void
 }) {
-  const ox = shape.x || 0, oy = shape.y || 0
-  const s  = MOD_STYLE[shape.moduleType]
+  const ox     = shape.x || 0, oy = shape.y || 0
+  const s      = MOD_STYLE[shape.moduleType]
   const tension = shape.shapeType === 'curve' ? 0.5 : shape.shapeType === 'freehand' ? 0.4 : 0
-  const pts   = shape.points || []
-  const count = Math.floor(pts.length / 2)
+  const pts    = shape.points || []
+  const count  = Math.floor(pts.length / 2)
+  const closed = shape.closed !== false
+
+  // Local state for segment-drag preview
+  const [segDrag, setSegDrag] = useState<{
+    segIdx: number; hoX: number; hoY: number; hiX: number; hiY: number
+  } | null>(null)
 
   return <>
-    {/* Click-trap BEHIND nodes: click outside any node to exit */}
+    {/* Click-trap BEHIND nodes */}
     <Rect x={-9999} y={-9999} width={99999} height={99999}
       fill="transparent" onClick={onClose} onTap={onClose}/>
 
     {/* Live shape preview */}
     <Line x={0} y={0}
       points={pts.map((v, i) => i % 2 === 0 ? v + ox : v + oy)}
-      closed={shape.closed !== false}
-      fill={s.fill} stroke={s.stroke} strokeWidth={2.5}
+      closed={closed} fill={s.fill} stroke={s.stroke} strokeWidth={2.5}
       tension={tension} listening={false}/>
+
+    {/* Preview curved segment while dragging */}
+    {segDrag && (() => {
+      const bIdx = (segDrag.segIdx + 1) % count
+      const ax2 = pts[segDrag.segIdx * 2] + ox, ay2 = pts[segDrag.segIdx * 2 + 1] + oy
+      const bx2 = pts[bIdx * 2] + ox,            by2 = pts[bIdx * 2 + 1] + oy
+      return <Path
+        data={`M ${ax2} ${ay2} C ${segDrag.hoX} ${segDrag.hoY} ${segDrag.hiX} ${segDrag.hiY} ${bx2} ${by2}`}
+        stroke="#22c55e" strokeWidth={2.5} fill="transparent" listening={false}/>
+    })()}
+
+    {/* ── Green midpoint handles — drag to curve a segment ──────────────── */}
+    {Array.from({ length: closed ? count : count - 1 }, (_, i) => {
+      const bIdx = (i + 1) % count
+      const ax = pts[i * 2] + ox,    ay = pts[i * 2 + 1] + oy
+      const bx = pts[bIdx * 2] + ox, by = pts[bIdx * 2 + 1] + oy
+      return (
+        <Circle key={`seg-${i}`}
+          x={(ax + bx) / 2} y={(ay + by) / 2}
+          radius={5} fill="#22c55e" stroke="white" strokeWidth={2} opacity={0.85}
+          draggable
+          onClick={e => { e.cancelBubble = true }}
+          onDragMove={e => {
+            e.cancelBubble = true
+            const dx = e.target.x(), dy = e.target.y()
+            const Qx = 2 * dx - 0.5 * ax - 0.5 * bx
+            const Qy = 2 * dy - 0.5 * ay - 0.5 * by
+            setSegDrag({ segIdx: i,
+              hoX: ax / 3 + 2 * Qx / 3, hoY: ay / 3 + 2 * Qy / 3,
+              hiX: bx / 3 + 2 * Qx / 3, hiY: by / 3 + 2 * Qy / 3
+            })
+          }}
+          onDragEnd={() => {
+            if (!segDrag) return
+            const cur = useTracerStore.getState().shapes.find(sh => sh.id === shape.id)
+            if (!cur?.points) return
+            const cp = cur.points, cc = Math.floor(cp.length / 2)
+            const cox = cur.x || 0, coy = cur.y || 0
+            const bIdx2 = (segDrag.segIdx + 1) % cc
+            const newNodes: BezierNode[] = Array.from({ length: cc }, (_, j) => ({
+              x: cp[j * 2], y: cp[j * 2 + 1],
+              ...(j === segDrag.segIdx ? { handleOut: { x: segDrag.hoX - cox, y: segDrag.hoY - coy } } : {}),
+              ...(j === bIdx2         ? { handleIn:  { x: segDrag.hiX - cox, y: segDrag.hiY - coy } } : {}),
+            }))
+            updateShape(shape.id, { shapeType: 'bezier', nodes: newNodes } as any)
+            setSegDrag(null)
+          }}
+        />
+      )
+    })}
 
     {/* Draggable node circles */}
     {Array.from({ length: count }, (_, i) => {
@@ -197,6 +252,9 @@ function BezierNodeEditor({ shape, updateShape, onClose }: {
     updateShape(shape.id, { nodes: newNodes } as any)
   }
 
+  const closed = shape.closed !== false
+  const n      = nodes.length
+
   return <>
     {/* Click-trap */}
     <Rect x={-9999} y={-9999} width={99999} height={99999}
@@ -205,6 +263,40 @@ function BezierNodeEditor({ shape, updateShape, onClose }: {
     {/* Live bezier shape preview */}
     <Path x={ox} y={oy} data={pathData}
       fill={s.fill} stroke={s.stroke} strokeWidth={2.5} listening={false}/>
+
+    {/* ── Green midpoint handles — drag to reshape a segment ────────────── */}
+    {Array.from({ length: closed ? n : n - 1 }, (_, i) => {
+      const bIdx = (i + 1) % n
+      const a = nodes[i], b = nodes[bIdx]
+      const mx = (a.x + b.x) / 2 + ox
+      const my = (a.y + b.y) / 2 + oy
+      return (
+        <Circle key={`seg-${i}`} x={mx} y={my}
+          radius={5} fill="#22c55e" stroke="white" strokeWidth={2} opacity={0.85}
+          draggable
+          onClick={e => { e.cancelBubble = true }}
+          onDragMove={e => {
+            e.cancelBubble = true
+            const cur = useTracerStore.getState().shapes.find(sh => sh.id === shape.id)
+            const cn  = (cur as any)?.nodes as BezierNode[]
+            if (!cn) return
+            const cox = cur?.x || 0, coy = cur?.y || 0
+            const ca  = cn[i], cb = cn[(i + 1) % cn.length]
+            const cax = ca.x + cox, cay = ca.y + coy
+            const cbx = cb.x + cox, cby = cb.y + coy
+            const dx  = e.target.x(), dy = e.target.y()
+            const Qx  = 2 * dx - 0.5 * cax - 0.5 * cbx
+            const Qy  = 2 * dy - 0.5 * cay - 0.5 * cby
+            const newNodes = cn.map((nd, j) => {
+              if (j === i)               return { ...nd, handleOut: { x: cax/3 + 2*Qx/3 - cox, y: cay/3 + 2*Qy/3 - coy } }
+              if (j === (i+1)%cn.length) return { ...nd, handleIn:  { x: cbx/3 + 2*Qx/3 - cox, y: cby/3 + 2*Qy/3 - coy } }
+              return nd
+            })
+            updateShape(shape.id, { nodes: newNodes } as any)
+          }}
+        />
+      )
+    })}
 
     {nodes.map((node, i) => {
       const nx       = node.x + ox

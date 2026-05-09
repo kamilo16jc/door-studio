@@ -94,6 +94,43 @@ export default function TracerToolbar({ showGrid, onToggleGrid, strokeWidth, onS
 
   const selectedShapes = shapes.filter(s => selectedShapeIds.includes(s.id))
 
+  // ── Auto-suavizar: convierte cualquier forma a bezier suave (Catmull-Rom) ──
+  const smoothShapes = () => {
+    selectedShapes.forEach(s => {
+      if (s.shapeType === 'rect' || s.shapeType === 'ellipse' || s.shapeType === 'line') return
+      const closed = s.closed !== false
+
+      if (s.points && s.points.length >= 6) {
+        const m = Math.floor(s.points.length / 2)
+        const P = Array.from({ length: m }, (_, i) => ({ x: s.points![i*2], y: s.points![i*2+1] }))
+        const nodes = P.map((p, i) => {
+          const prev = P[(i - 1 + m) % m], next = P[(i + 1) % m]
+          if (!closed) {
+            if (i === 0)     return { x: p.x, y: p.y, handleOut: { x: p.x + (P[1].x-p.x)/3,     y: p.y + (P[1].y-p.y)/3     } }
+            if (i === m - 1) return { x: p.x, y: p.y, handleIn:  { x: p.x - (p.x-P[m-2].x)/3,  y: p.y - (p.y-P[m-2].y)/3  } }
+          }
+          const dx = (next.x - prev.x) / 6, dy = (next.y - prev.y) / 6
+          return { x: p.x, y: p.y, handleIn: { x: p.x-dx, y: p.y-dy }, handleOut: { x: p.x+dx, y: p.y+dy } }
+        })
+        updateShape(s.id, { shapeType: 'bezier', nodes } as any)
+      } else if ((s as any).nodes) {
+        const cur: Array<{x:number;y:number}> = (s as any).nodes
+        const m = cur.length
+        if (m < 3) return
+        const newNodes = cur.map((p, i) => {
+          const prev = cur[(i - 1 + m) % m], next = cur[(i + 1) % m]
+          if (!closed) {
+            if (i === 0)     return { x: p.x, y: p.y, handleOut: { x: p.x + (next.x-p.x)/3,    y: p.y + (next.y-p.y)/3    } }
+            if (i === m - 1) return { x: p.x, y: p.y, handleIn:  { x: p.x - (p.x-prev.x)/3,   y: p.y - (p.y-prev.y)/3   } }
+          }
+          const dx = (next.x - prev.x) / 6, dy = (next.y - prev.y) / 6
+          return { x: p.x, y: p.y, handleIn: { x: p.x-dx, y: p.y-dy }, handleOut: { x: p.x+dx, y: p.y+dy } }
+        })
+        updateShape(s.id, { nodes: newNodes } as any)
+      }
+    })
+  }
+
   const rotate = (delta: number) => {
     selectedShapes.forEach(s => {
       const cur = s.rotation || 0
@@ -256,6 +293,16 @@ export default function TracerToolbar({ showGrid, onToggleGrid, strokeWidth, onS
                   <FlipVertical size={11}/> V
                 </button>
               </div>
+            )}
+
+            {/* Suavizar curvas automáticamente */}
+            {selectedShapes.some(s => s.points || (s as any).nodes) && (
+              <button
+                onClick={smoothShapes}
+                className="w-full flex items-center justify-center gap-1.5 py-1.5 text-xs border border-emerald-200 rounded hover:bg-emerald-50 text-emerald-700 font-medium transition-colors"
+                title="Convierte todos los vértices en curvas suaves (Catmull-Rom)">
+                <Spline size={11}/> Suavizar curvas
+              </button>
             )}
 
             {/* Duplicar */}
