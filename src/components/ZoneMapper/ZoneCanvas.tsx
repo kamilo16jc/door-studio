@@ -45,8 +45,10 @@ function ZoneShape({ shape }: { shape: TracedShape }) {
     listening: false as const,
   }
 
+  const rot = shape.rotation || 0
   const shapeProps = {
     fill, stroke, strokeWidth: 2,
+    rotation: rot,
     onClick: handleClick, onTap: handleClick,
   }
 
