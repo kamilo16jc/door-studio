@@ -551,21 +551,42 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
         node.scaleX(1); node.scaleY(1)
         updateShape(id, { radiusX:(shape.radiusX||50)*sx, radiusY:(shape.radiusY||50)*sy, rotation: node.rotation() })
       } else if (shape.points && shape.points.length >= 2) {
-        // polygon / freehand / curve / line — scale all points
+        // polygon / freehand / curve / line
+        // Bake full transform (translate + rotate + scale) into points so that
+        // x=0, y=0, rotation=0 always — avoids double-offset bug in SVG export
         const sx = node.scaleX(), sy = node.scaleY()
+        const dx = node.x(),     dy = node.y()
+        const rad = (node.rotation() * Math.PI) / 180
+        const cos = Math.cos(rad), sin = Math.sin(rad)
         node.scaleX(1); node.scaleY(1)
-        const scaledPts = shape.points.map((v, i) => i % 2 === 0 ? v * sx : v * sy)
-        updateShape(id, { x: node.x(), y: node.y(), points: scaledPts, rotation: node.rotation() })
+        node.x(0);      node.y(0)
+        node.rotation(0)
+        const newPts: number[] = []
+        for (let i = 0; i < shape.points.length; i += 2) {
+          const lx = shape.points[i] * sx, ly = shape.points[i + 1] * sy
+          newPts.push(lx * cos - ly * sin + dx)
+          newPts.push(lx * sin + ly * cos + dy)
+        }
+        updateShape(id, { x: 0, y: 0, points: newPts, rotation: 0 })
       } else if ((shape as any).nodes) {
-        // bezier — scale all node positions and handles
+        // bezier — bake full transform into node positions and handles
         const sx = node.scaleX(), sy = node.scaleY()
+        const dx = node.x(),     dy = node.y()
+        const rad = (node.rotation() * Math.PI) / 180
+        const cos = Math.cos(rad), sin = Math.sin(rad)
         node.scaleX(1); node.scaleY(1)
-        const scaledNodes = ((shape as any).nodes as BezierNode[]).map(n => ({
-          x: n.x * sx, y: n.y * sy,
-          handleIn:  n.handleIn  ? { x: n.handleIn.x  * sx, y: n.handleIn.y  * sy } : undefined,
-          handleOut: n.handleOut ? { x: n.handleOut.x * sx, y: n.handleOut.y * sy } : undefined,
+        node.x(0);      node.y(0)
+        node.rotation(0)
+        const bake = (lx: number, ly: number) => ({
+          x: lx * sx * cos - ly * sy * sin + dx,
+          y: lx * sx * sin + ly * sy * cos + dy,
+        })
+        const newNodes = ((shape as any).nodes as BezierNode[]).map(n => ({
+          ...bake(n.x, n.y),
+          handleIn:  n.handleIn  ? bake(n.handleIn.x,  n.handleIn.y)  : undefined,
+          handleOut: n.handleOut ? bake(n.handleOut.x, n.handleOut.y) : undefined,
         }))
-        updateShape(id, { x: node.x(), y: node.y(), nodes: scaledNodes, rotation: node.rotation() } as any)
+        updateShape(id, { x: 0, y: 0, nodes: newNodes, rotation: 0 } as any)
       } else {
         node.scaleX(1); node.scaleY(1)
         updateShape(id, { x: node.x(), y: node.y(), rotation: node.rotation() })

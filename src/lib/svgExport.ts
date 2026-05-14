@@ -98,7 +98,17 @@ export function generateSVG(opts: ExportOptions): string {
 
     const rotation = shape.rotation || 0
     const { cx, cy } = getShapeCenter(shape)
-    const transformAttr = rotation ? ` transform="rotate(${rotation}, ${cx}, ${cy})"` : ''
+    // compound svgPath uses local coords (relative to shape.x/y) → needs translate
+    let transformAttr = ''
+    if (shape.shapeType === 'compound') {
+      const tx = shape.x || 0, ty = shape.y || 0
+      const parts = []
+      if (tx !== 0 || ty !== 0) parts.push(`translate(${tx},${ty})`)
+      if (rotation) parts.push(`rotate(${rotation},${(cx-tx).toFixed(2)},${(cy-ty).toFixed(2)})`)
+      if (parts.length) transformAttr = ` transform="${parts.join(' ')}"`
+    } else {
+      transformAttr = rotation ? ` transform="rotate(${rotation}, ${cx}, ${cy})"` : ''
+    }
 
     let inner = ''
 
