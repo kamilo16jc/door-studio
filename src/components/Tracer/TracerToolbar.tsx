@@ -5,7 +5,7 @@ import {
   MousePointer2, Square, Circle, Minus, Triangle,
   PenLine, Pencil, Trash2, RotateCcw, ImagePlus,
   ZoomIn, ZoomOut, Grid3X3, Diamond, ArrowRight,
-  RotateCw, FlipHorizontal, FlipVertical, Copy, Spline, Pen, Octagon
+  RotateCw, FlipHorizontal, FlipVertical, Copy, Spline, Pen, Octagon, Layers
 } from 'lucide-react'
 
 const ArchRectIcon = () => (
@@ -85,7 +85,7 @@ const HINTS: Partial<Record<Tool, string>> = {
   freehand: 'Mantén presionado y arrastra para dibujar libremente',
   curve:    'Click para agregar puntos · La línea se suaviza automáticamente · Click en ● verde para cerrar · Doble-click para terminar',
   bezier:   'Click = punto recto · Click+arrastrar = curva con manijas Bezier · Click en ● verde para cerrar · Doble-click para terminar',
-  archrect:      'Arrastra para dibujar un panel con arco · Handle amarillo ajusta altura del arco',
+  archrect:      'Arrastra para dibujar un panel con arco · Handle ● amarillo sube/baja la base del arco · Súbelo al máximo para obtener una media luna pura',
   chamferedrect: 'Arrastra para dibujar un panel biselado · Handle amarillo ajusta el bisel',
 }
 
@@ -104,10 +104,37 @@ export default function TracerToolbar({ showGrid, onToggleGrid, strokeWidth, onS
     canvasScale, setCanvasScale,
     canvasWidth, canvasHeight,
     setCanvasSize, clearAll,
-    shapes, selectedShapeIds, updateShape
+    shapes, selectedShapeIds, updateShape, addShape
   } = useTracerStore()
 
   const selectedShapes = shapes.filter(s => selectedShapeIds.includes(s.id))
+
+  // ── Molduras concéntricas ──
+  const [moldOffset, setMoldOffset] = useState(12)
+  const [moldCount, setMoldCount] = useState(2)
+
+  const generateMolduras = () => {
+    if (selectedShapes.length !== 1) return
+    const base = selectedShapes[0]
+    if (base.shapeType !== 'archrect' && base.shapeType !== 'chamferedrect') return
+
+    for (let i = 1; i <= moldCount; i++) {
+      const off = moldOffset * i
+      const newW = (base.width || 0) - 2 * off
+      const newH = (base.height || 0) - 2 * off
+      if (newW < 20 || newH < 20) break
+
+      const { id: _id, ...rest } = base
+
+      if (base.shapeType === 'archrect') {
+        const newAH = Math.max(10, (base.archHeight ?? (base.width || 0) / 2) - off)
+        addShape({ ...rest, x: base.x + off, y: base.y + off, width: newW, height: newH, archHeight: newAH })
+      } else {
+        const newCS = Math.max(2, (base.chamferSize ?? 10) - off * 0.3)
+        addShape({ ...rest, x: base.x + off, y: base.y + off, width: newW, height: newH, chamferSize: newCS })
+      }
+    }
+  }
 
   // ── Auto-suavizar: convierte cualquier forma a bezier suave (Catmull-Rom) ──
   const smoothShapes = () => {
@@ -318,6 +345,41 @@ export default function TracerToolbar({ showGrid, onToggleGrid, strokeWidth, onS
                 title="Convierte todos los vértices en curvas suaves (Catmull-Rom)">
                 <Spline size={11}/> Suavizar curvas
               </button>
+            )}
+
+            {/* Molduras concéntricas — solo para archrect o chamferedrect */}
+            {selectedShapes.length === 1 &&
+              (selectedShapes[0].shapeType === 'archrect' || selectedShapes[0].shapeType === 'chamferedrect') && (
+              <div className="space-y-2 pt-1 border-t border-gray-100">
+                <p className="text-xs font-semibold text-gray-500">Molduras concéntricas</p>
+
+                {/* Offset control */}
+                <div>
+                  <div className="flex justify-between text-xs text-gray-400 mb-1">
+                    <span>Separación</span>
+                    <span className="font-medium text-gray-600">{moldOffset}px</span>
+                  </div>
+                  <input type="range" min="4" max="40" step="1" value={moldOffset}
+                    onChange={e => setMoldOffset(Number(e.target.value))}
+                    className="w-full accent-amber-500 h-1"/>
+                </div>
+
+                {/* Count control */}
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-400 flex-1">Cantidad</span>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => setMoldCount(c => Math.max(1, c - 1))} className="w-5 h-5 rounded bg-gray-100 hover:bg-gray-200 text-xs font-bold text-gray-600 flex items-center justify-center">−</button>
+                    <span className="text-xs font-medium text-gray-700 w-4 text-center">{moldCount}</span>
+                    <button onClick={() => setMoldCount(c => Math.min(5, c + 1))} className="w-5 h-5 rounded bg-gray-100 hover:bg-gray-200 text-xs font-bold text-gray-600 flex items-center justify-center">+</button>
+                  </div>
+                </div>
+
+                {/* Generate button */}
+                <button onClick={generateMolduras}
+                  className="w-full px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-semibold transition-colors flex items-center justify-center gap-1.5">
+                  <Layers size={12}/> Generar molduras
+                </button>
+              </div>
             )}
 
             {/* Duplicar */}
