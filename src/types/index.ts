@@ -23,7 +23,7 @@ export interface BezierNode {
 export interface TracedShape {
   id: string
   moduleType: ModuleType
-  shapeType: 'rect' | 'ellipse' | 'line' | 'polygon' | 'freehand' | 'curve' | 'bezier' | 'archrect' | 'chamferedrect'
+  shapeType: 'rect' | 'ellipse' | 'line' | 'polygon' | 'freehand' | 'curve' | 'bezier' | 'archrect' | 'chamferedrect' | 'compound'
   x: number
   y: number
   width?: number
@@ -39,6 +39,7 @@ export interface TracedShape {
   strokeWidth: number
   closed?: boolean
   rotation?: number
+  svgPath?: string   // pre-computed absolute SVG path d string (for compound shapes)
 }
 
 // ─── Zonas del panel ──────────────────────────────────────────────────────────

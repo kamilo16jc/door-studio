@@ -274,6 +274,10 @@ export function shapeToSVGPath(shape: {
   nodes?: any[]
   closed?: boolean
 }): string {
+  if (shape.shapeType === 'compound' && (shape as any).svgPath) {
+    return (shape as any).svgPath
+  }
+
   if (shape.shapeType === 'archrect' && shape.width && shape.height) {
     const ah = shape.archHeight ?? (shape.width / 2)
     return archRectToPath(shape.x, shape.y, shape.width, shape.height, ah)

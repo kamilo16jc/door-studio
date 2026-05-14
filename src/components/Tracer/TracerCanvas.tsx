@@ -28,7 +28,7 @@ function Grid({ w, h, size=40 }: { w:number; h:number; size?:number }) {
 // ─── Bounding box helpers for marquee ────────────────────────────────────────
 function getShapeBounds(s: TracedShape) {
   const ox = s.x || 0, oy = s.y || 0
-  if (s.shapeType === 'rect' || s.shapeType === 'archrect' || s.shapeType === 'chamferedrect')
+  if (s.shapeType === 'rect' || s.shapeType === 'archrect' || s.shapeType === 'chamferedrect' || s.shapeType === 'compound')
     return { x1: s.x, y1: s.y, x2: s.x + (s.width||0), y2: s.y + (s.height||0) }
   if (s.shapeType === 'ellipse')
     return { x1: s.x-(s.radiusX||0), y1: s.y-(s.radiusY||0), x2: s.x+(s.radiusX||0), y2: s.y+(s.radiusY||0) }
@@ -119,6 +119,19 @@ const ShapeEl = React.forwardRef<Konva.Shape, {
       x={shape.x||0} y={shape.y||0}
       data={pathData}
       fill={s.fill}
+      stroke={selected ? '#2563eb' : s.stroke}
+      strokeWidth={sw}
+      opacity={opacity ?? 1}
+      {...common}
+    />
+  }
+  if (shape.shapeType === 'compound' && (shape as any).svgPath) {
+    return <Path
+      ref={ref as React.RefObject<Konva.Path>}
+      x={shape.x || 0} y={shape.y || 0}
+      data={(shape as any).svgPath}
+      fill={s.fill}
+      fillRule="evenodd"
       stroke={selected ? '#2563eb' : s.stroke}
       strokeWidth={sw}
       opacity={opacity ?? 1}
@@ -520,7 +533,7 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
       const id    = node.id()
       const shape = shapesRef.current.find(s => s.id === id)
       if (!shape) return
-      if (shape.shapeType === 'archrect' || shape.shapeType === 'chamferedrect') {
+      if (shape.shapeType === 'archrect' || shape.shapeType === 'chamferedrect' || shape.shapeType === 'compound') {
         const sx = node.scaleX(), sy = node.scaleY()
         node.scaleX(1); node.scaleY(1)
         const newW = (shape.width||0)*sx

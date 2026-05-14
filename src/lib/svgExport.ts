@@ -20,7 +20,7 @@ interface ExportOptions {
 
 // ─── Centro geométrico de una forma ──────────────────────────────────────────
 function getShapeCenter(shape: TracedShape): { cx: number; cy: number } {
-  if ((shape.shapeType === 'archrect' || shape.shapeType === 'chamferedrect') && shape.width && shape.height)
+  if ((shape.shapeType === 'archrect' || shape.shapeType === 'chamferedrect' || shape.shapeType === 'compound') && shape.width && shape.height)
     return { cx: shape.x + shape.width / 2, cy: shape.y + shape.height / 2 }
   if (shape.shapeType === 'rect' && shape.width && shape.height)
     return { cx: shape.x + shape.width / 2, cy: shape.y + shape.height / 2 }

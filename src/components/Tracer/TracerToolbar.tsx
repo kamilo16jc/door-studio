@@ -7,6 +7,7 @@ import {
   ZoomIn, ZoomOut, Grid3X3, Diamond, ArrowRight,
   RotateCw, FlipHorizontal, FlipVertical, Copy, Spline, Pen, Octagon, Layers
 } from 'lucide-react'
+import { archRectToPath, chamferRectToPath } from '../../lib/svgFilters'
 
 const ArchRectIcon = () => (
   <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round">
@@ -134,6 +135,55 @@ export default function TracerToolbar({ showGrid, onToggleGrid, strokeWidth, onS
         addShape({ ...rest, x: base.x + off, y: base.y + off, width: newW, height: newH, chamferSize: newCS })
       }
     }
+  }
+
+  // ── Crear anillo / moldura compuesta ──
+  const getShapePath = (s: typeof selectedShapes[0], ox: number, oy: number): string => {
+    const rx = (s.x || 0) - ox
+    const ry = (s.y || 0) - oy
+    const w = s.width || 0
+    const h = s.height || 0
+    if (s.shapeType === 'archrect')
+      return archRectToPath(rx, ry, w, h, s.archHeight ?? w / 2)
+    if (s.shapeType === 'chamferedrect')
+      return chamferRectToPath(rx, ry, w, h, s.chamferSize ?? Math.min(w, h) * 0.1)
+    if (s.shapeType === 'rect')
+      return `M ${rx} ${ry} h ${w} v ${h} h ${-w} Z`
+    return ''
+  }
+
+  const createRing = () => {
+    if (selectedShapes.length !== 2) return
+    const [a, b] = selectedShapes
+
+    const compatible = ['archrect', 'chamferedrect', 'rect']
+    if (!compatible.includes(a.shapeType) || !compatible.includes(b.shapeType)) return
+
+    const areaOf = (s: typeof a) => (s.width || 0) * (s.height || 0)
+    const [outer, inner] = areaOf(a) >= areaOf(b) ? [a, b] : [b, a]
+
+    const ox = outer.x || 0
+    const oy = outer.y || 0
+    const bw = outer.width || 0
+    const bh = outer.height || 0
+
+    const outerPath = getShapePath(outer, ox, oy)
+    const innerPath = getShapePath(inner, ox, oy)
+
+    if (!outerPath || !innerPath) return
+
+    const combinedPath = outerPath + ' ' + innerPath
+
+    const { id: _id, ...outerRest } = outer
+    addShape({
+      ...outerRest,
+      shapeType: 'compound' as any,
+      x: ox,
+      y: oy,
+      width: bw,
+      height: bh,
+      svgPath: combinedPath,
+    } as any)
   }
 
   // ── Auto-suavizar: convierte cualquier forma a bezier suave (Catmull-Rom) ──
@@ -335,6 +385,15 @@ export default function TracerToolbar({ showGrid, onToggleGrid, strokeWidth, onS
                   <FlipVertical size={11}/> V
                 </button>
               </div>
+            )}
+
+            {/* Crear anillo entre 2 formas */}
+            {selectedShapes.length === 2 &&
+             selectedShapes.every(s => ['archrect','chamferedrect','rect'].includes(s.shapeType)) && (
+              <button onClick={createRing}
+                className="w-full px-3 py-2 bg-violet-500 hover:bg-violet-600 text-white rounded-lg text-xs font-semibold transition-colors flex items-center justify-center gap-1.5">
+                <Layers size={12}/> Crear anillo / moldura
+              </button>
             )}
 
             {/* Suavizar curvas automáticamente */}
