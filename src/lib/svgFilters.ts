@@ -153,6 +153,35 @@ export function getFilterForZone(tipo: ZoneTipo, finish: FinishType): string {
   }
 }
 
+// ─── archRectToPath: rectangle with elliptical arch top ──────────────────────
+export function archRectToPath(x: number, y: number, w: number, h: number, ah: number): string {
+  const k = 0.5523
+  const hw = w / 2
+  return [
+    `M ${x} ${y + h}`,
+    `L ${x + w} ${y + h}`,
+    `L ${x + w} ${y + ah}`,
+    `C ${x + w} ${y + ah - ah * k} ${x + hw + hw * k} ${y} ${x + hw} ${y}`,
+    `C ${x + hw - hw * k} ${y} ${x} ${y + ah - ah * k} ${x} ${y + ah}`,
+    `Z`
+  ].join(' ')
+}
+
+// ─── chamferRectToPath: rectangle with diagonal cut corners ──────────────────
+export function chamferRectToPath(x: number, y: number, w: number, h: number, cs: number): string {
+  return [
+    `M ${x + cs} ${y}`,
+    `L ${x + w - cs} ${y}`,
+    `L ${x + w} ${y + cs}`,
+    `L ${x + w} ${y + h - cs}`,
+    `L ${x + w - cs} ${y + h}`,
+    `L ${x + cs} ${y + h}`,
+    `L ${x} ${y + h - cs}`,
+    `L ${x} ${y + cs}`,
+    `Z`
+  ].join(' ')
+}
+
 // ─── Bezier nodes → SVG cubic bezier path ─────────────────────────────────────
 export function bezierNodesToPath(
   nodes: BezierNode[],
@@ -239,10 +268,22 @@ export function shapeToSVGPath(shape: {
   height?: number
   radiusX?: number
   radiusY?: number
+  archHeight?: number
+  chamferSize?: number
   points?: number[]
   nodes?: any[]
   closed?: boolean
 }): string {
+  if (shape.shapeType === 'archrect' && shape.width && shape.height) {
+    const ah = shape.archHeight ?? (shape.width / 2)
+    return archRectToPath(shape.x, shape.y, shape.width, shape.height, ah)
+  }
+
+  if (shape.shapeType === 'chamferedrect' && shape.width && shape.height) {
+    const cs = shape.chamferSize ?? Math.min(shape.width, shape.height) * 0.1
+    return chamferRectToPath(shape.x, shape.y, shape.width, shape.height, cs)
+  }
+
   if (shape.shapeType === 'rect' && shape.width && shape.height) {
     return `M ${shape.x} ${shape.y} h ${shape.width} v ${shape.height} h ${-shape.width} Z`
   }

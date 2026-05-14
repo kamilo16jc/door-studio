@@ -7,7 +7,7 @@ export type FinishType = 'mate' | 'satinado' | 'brillante'
 
 export type TextureStatus = 'original' | 'processing' | 'ready' | 'error'
 
-export type Tool = 'select' | 'rect' | 'square' | 'ellipse' | 'circle' | 'line' | 'arrow' | 'pen' | 'triangle' | 'diamond' | 'polygon' | 'freehand' | 'curve' | 'bezier' | 'delete'
+export type Tool = 'select' | 'rect' | 'square' | 'ellipse' | 'circle' | 'archrect' | 'chamferedrect' | 'line' | 'arrow' | 'pen' | 'triangle' | 'diamond' | 'polygon' | 'freehand' | 'curve' | 'bezier' | 'delete'
 
 export type AppModule = 'tracer' | 'zones' | 'textures' | 'realism' | 'preview' | 'export'
 
@@ -23,13 +23,15 @@ export interface BezierNode {
 export interface TracedShape {
   id: string
   moduleType: ModuleType
-  shapeType: 'rect' | 'ellipse' | 'line' | 'polygon' | 'freehand' | 'curve' | 'bezier'
+  shapeType: 'rect' | 'ellipse' | 'line' | 'polygon' | 'freehand' | 'curve' | 'bezier' | 'archrect' | 'chamferedrect'
   x: number
   y: number
   width?: number
   height?: number
   radiusX?: number
   radiusY?: number
+  archHeight?: number
+  chamferSize?: number
   points?: number[]
   nodes?: BezierNode[]
   fill: string

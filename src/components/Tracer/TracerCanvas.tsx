@@ -3,7 +3,7 @@ import { Stage, Layer, Image as KonvaImage, Rect, Ellipse, Line, Circle, Transfo
 import Konva from 'konva'
 import { useTracerStore } from '../../store/tracerStore'
 import { TracedShape, ModuleType, BezierNode } from '../../types'
-import { bezierNodesToPath } from '../../lib/svgFilters'
+import { bezierNodesToPath, archRectToPath, chamferRectToPath } from '../../lib/svgFilters'
 import useImage from 'use-image'
 
 const MOD_STYLE: Record<ModuleType, { stroke: string; fill: string }> = {
@@ -28,7 +28,7 @@ function Grid({ w, h, size=40 }: { w:number; h:number; size?:number }) {
 // ─── Bounding box helpers for marquee ────────────────────────────────────────
 function getShapeBounds(s: TracedShape) {
   const ox = s.x || 0, oy = s.y || 0
-  if (s.shapeType === 'rect')
+  if (s.shapeType === 'rect' || s.shapeType === 'archrect' || s.shapeType === 'chamferedrect')
     return { x1: s.x, y1: s.y, x2: s.x + (s.width||0), y2: s.y + (s.height||0) }
   if (s.shapeType === 'ellipse')
     return { x1: s.x-(s.radiusX||0), y1: s.y-(s.radiusY||0), x2: s.x+(s.radiusX||0), y2: s.y+(s.radiusY||0) }
@@ -99,6 +99,21 @@ const ShapeEl = React.forwardRef<Konva.Shape, {
       lineCap="round" lineJoin="round" opacity={opacity ?? 1} {...common}/>
   if (shape.shapeType === 'bezier' && (shape as any).nodes) {
     const pathData = bezierNodesToPath((shape as any).nodes as BezierNode[], shape.closed !== false)
+    return <Path
+      ref={ref as React.RefObject<Konva.Path>}
+      x={shape.x||0} y={shape.y||0}
+      data={pathData}
+      fill={s.fill}
+      stroke={selected ? '#2563eb' : s.stroke}
+      strokeWidth={sw}
+      opacity={opacity ?? 1}
+      {...common}
+    />
+  }
+  if (shape.shapeType === 'archrect' || shape.shapeType === 'chamferedrect') {
+    const pathData = shape.shapeType === 'archrect'
+      ? archRectToPath(0, 0, shape.width||0, shape.height||0, shape.archHeight ?? (shape.width||0)/2)
+      : chamferRectToPath(0, 0, shape.width||0, shape.height||0, shape.chamferSize ?? Math.min(shape.width||50, shape.height||50)*0.1)
     return <Path
       ref={ref as React.RefObject<Konva.Path>}
       x={shape.x||0} y={shape.y||0}
@@ -505,7 +520,16 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
       const id    = node.id()
       const shape = shapesRef.current.find(s => s.id === id)
       if (!shape) return
-      if (shape.shapeType === 'rect') {
+      if (shape.shapeType === 'archrect' || shape.shapeType === 'chamferedrect') {
+        const sx = node.scaleX(), sy = node.scaleY()
+        node.scaleX(1); node.scaleY(1)
+        const newW = (shape.width||0)*sx
+        const newH = (shape.height||0)*sy
+        const updates: any = { x: node.x(), y: node.y(), width: newW, height: newH, rotation: node.rotation() }
+        if (shape.shapeType === 'archrect') updates.archHeight = (shape.archHeight ?? newW/2) * sy
+        if (shape.shapeType === 'chamferedrect') updates.chamferSize = (shape.chamferSize ?? 10) * Math.min(sx, sy)
+        updateShape(id, updates)
+      } else if (shape.shapeType === 'rect') {
         const sx = node.scaleX(), sy = node.scaleY()
         node.scaleX(1); node.scaleY(1)
         updateShape(id, { x: node.x(), y: node.y(), width:(shape.width||0)*sx, height:(shape.height||0)*sy, rotation: node.rotation() })
@@ -591,7 +615,7 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
     return { x, y, snapped: false, closesChain: false }
   }, [getEndpoints])
 
-  const RECT_TOOLS = ['rect','ellipse','square','circle']
+  const RECT_TOOLS = ['rect','ellipse','square','circle','archrect','chamferedrect']
   const DRAG_TOOLS = [...RECT_TOOLS,'arrow']
   const POLY_TOOLS = ['pen','triangle','diamond']
   const CURVE_PEN_TOOLS = ['pen','curve']  // ambas usan polyPts
@@ -888,6 +912,10 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
       const size = activeTool==='square'?Math.max(w,h):null
       openPopup({ shapeType:'rect', x:minX, y:minY, width:size||w, height:size||h })
     }
+    if (activeTool === 'archrect')
+      openPopup({ shapeType:'archrect', x:minX, y:minY, width:w, height:h, archHeight: Math.min(w/2, h*0.6) })
+    if (activeTool === 'chamferedrect')
+      openPopup({ shapeType:'chamferedrect', x:minX, y:minY, width:w, height:h, chamferSize: Math.min(w,h)*0.1 })
     if (activeTool==='ellipse'||activeTool==='circle') {
       const rx=w/2, ry=activeTool==='circle'?rx:h/2
       openPopup({ shapeType:'ellipse', x:minX+rx, y:minY+ry, radiusX:rx, radiusY:ry })
@@ -942,6 +970,8 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
     const style = { stroke:'#3b82f6', strokeWidth:sw, dash:[5,3] as number[], fill:'rgba(59,130,246,0.05)' as string, listening:false as boolean }
     if (activeTool==='rect') return <Rect x={minX} y={minY} width={w} height={h} {...style}/>
     if (activeTool==='square') { const s=Math.max(w,h); return <Rect x={minX} y={minY} width={s} height={s} {...style}/> }
+    if (activeTool==='archrect') return <Path x={minX} y={minY} data={archRectToPath(0, 0, w, h, Math.min(w/2, h*0.6))} {...style}/>
+    if (activeTool==='chamferedrect') return <Path x={minX} y={minY} data={chamferRectToPath(0, 0, w, h, Math.min(w,h)*0.1)} {...style}/>
     if (activeTool==='ellipse') return <Ellipse x={minX+w/2} y={minY+h/2} radiusX={w/2} radiusY={h/2} {...style}/>
     if (activeTool==='circle') { const r=w/2; return <Ellipse x={minX+r} y={minY+r} radiusX={r} radiusY={r} {...style}/> }
     if (activeTool==='line') return <Line points={[x,y,x2,y2]} stroke={canCloseChain?'#22c55e':'#3b82f6'} strokeWidth={sw} dash={[5,3]} lineCap="round" listening={false}/>
@@ -1014,6 +1044,65 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
               onTransformEnd={onTransformEnd}
             />
           </Layer>
+
+          {/* ── Arch / Chamfer handle layer ───────────────────────────────── */}
+          {activeTool === 'select' && selectedShapeIds.length === 1 && (() => {
+            const selShape = shapes.find(s => s.id === selectedShapeIds[0])
+            if (!selShape) return null
+            if (selShape.shapeType === 'archrect') {
+              const ah = selShape.archHeight ?? (selShape.width||0)/2
+              const hx = (selShape.x||0) + (selShape.width||0)/2
+              const hy = (selShape.y||0) + ah
+              return (
+                <Layer>
+                  <Circle
+                    x={hx} y={hy}
+                    radius={7}
+                    fill="#fbbf24" stroke="white" strokeWidth={2}
+                    draggable
+                    dragBoundFunc={(pos) => ({ x: hx, y: pos.y })}
+                    cursor="ns-resize"
+                    onDragMove={e => {
+                      const newAh = Math.max(10, Math.min((selShape.height||0)-10, e.target.y() - (selShape.y||0)))
+                      updateShape(selShape.id, { archHeight: newAh })
+                    }}
+                    onDragEnd={e => {
+                      const newAh = Math.max(10, Math.min((selShape.height||0)-10, e.target.y() - (selShape.y||0)))
+                      updateShape(selShape.id, { archHeight: newAh })
+                    }}
+                  />
+                </Layer>
+              )
+            }
+            if (selShape.shapeType === 'chamferedrect') {
+              const cs = selShape.chamferSize ?? Math.min(selShape.width||50, selShape.height||50)*0.1
+              const hx = (selShape.x||0) + cs
+              const hy = selShape.y||0
+              return (
+                <Layer>
+                  <Circle
+                    x={hx} y={hy}
+                    radius={7}
+                    fill="#fbbf24" stroke="white" strokeWidth={2}
+                    draggable
+                    dragBoundFunc={(pos) => ({ x: pos.x, y: hy })}
+                    cursor="ew-resize"
+                    onDragMove={e => {
+                      const maxCs = Math.min(selShape.width||50, selShape.height||50)/2 - 2
+                      const newCs = Math.max(2, Math.min(maxCs, e.target.x() - (selShape.x||0)))
+                      updateShape(selShape.id, { chamferSize: newCs })
+                    }}
+                    onDragEnd={e => {
+                      const maxCs = Math.min(selShape.width||50, selShape.height||50)/2 - 2
+                      const newCs = Math.max(2, Math.min(maxCs, e.target.x() - (selShape.x||0)))
+                      updateShape(selShape.id, { chamferSize: newCs })
+                    }}
+                  />
+                </Layer>
+              )
+            }
+            return null
+          })()}
 
           {/* ── Node editor layer ─────────────────────────────────────────── */}
           {editingShapeId && (() => {

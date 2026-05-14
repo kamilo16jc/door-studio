@@ -5,8 +5,14 @@ import {
   MousePointer2, Square, Circle, Minus, Triangle,
   PenLine, Pencil, Trash2, RotateCcw, ImagePlus,
   ZoomIn, ZoomOut, Grid3X3, Diamond, ArrowRight,
-  RotateCw, FlipHorizontal, FlipVertical, Copy, Spline, Pen
+  RotateCw, FlipHorizontal, FlipVertical, Copy, Spline, Pen, Octagon
 } from 'lucide-react'
+
+const ArchRectIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round">
+    <path d="M1 13 L13 13 L13 6 C13 3 10.5 1 7 1 C3.5 1 1 3 1 6 Z"/>
+  </svg>
+)
 import AutoTracer from './AutoTracer'
 import { createTemplateShapes, DOOR_TEMPLATES } from '../../lib/doorTemplates'
 
@@ -23,6 +29,13 @@ const TOOL_GROUPS = [
     tools: [
       { id: 'rect'   as Tool, label: 'Rectángulo',   icon: <Square  size={14}/> },
       { id: 'square' as Tool, label: 'Cuadrado',     icon: <Square  size={14}/> },
+    ]
+  },
+  {
+    label: 'Paneles',
+    tools: [
+      { id: 'archrect'      as Tool, label: 'Panel con arco',   icon: <ArchRectIcon/> },
+      { id: 'chamferedrect' as Tool, label: 'Panel biselado',   icon: <Octagon size={14}/> },
     ]
   },
   {
@@ -72,6 +85,8 @@ const HINTS: Partial<Record<Tool, string>> = {
   freehand: 'Mantén presionado y arrastra para dibujar libremente',
   curve:    'Click para agregar puntos · La línea se suaviza automáticamente · Click en ● verde para cerrar · Doble-click para terminar',
   bezier:   'Click = punto recto · Click+arrastrar = curva con manijas Bezier · Click en ● verde para cerrar · Doble-click para terminar',
+  archrect:      'Arrastra para dibujar un panel con arco · Handle amarillo ajusta altura del arco',
+  chamferedrect: 'Arrastra para dibujar un panel biselado · Handle amarillo ajusta el bisel',
 }
 
 interface Props {
