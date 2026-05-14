@@ -1076,11 +1076,11 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
                     dragBoundFunc={(pos) => ({ x: hx, y: pos.y })}
                     cursor="ns-resize"
                     onDragMove={e => {
-                      const newAh = Math.max(10, Math.min((selShape.height||0)-10, e.target.y() - (selShape.y||0)))
+                      const newAh = Math.max(5, Math.min((selShape.height||0), e.target.y() - (selShape.y||0)))
                       updateShape(selShape.id, { archHeight: newAh })
                     }}
                     onDragEnd={e => {
-                      const newAh = Math.max(10, Math.min((selShape.height||0)-10, e.target.y() - (selShape.y||0)))
+                      const newAh = Math.max(5, Math.min((selShape.height||0), e.target.y() - (selShape.y||0)))
                       updateShape(selShape.id, { archHeight: newAh })
                     }}
                   />
