@@ -99,6 +99,8 @@ export function generateSVG(opts: ExportOptions): string {
     const rotation = shape.rotation || 0
     const { cx, cy } = getShapeCenter(shape)
     // compound svgPath uses local coords (relative to shape.x/y) → needs translate
+    // All other shapes: Konva rotates around the node's local origin (shape.x, shape.y),
+    // so SVG must also rotate around that same point, not the centroid.
     let transformAttr = ''
     if (shape.shapeType === 'compound') {
       const tx = shape.x || 0, ty = shape.y || 0
@@ -107,7 +109,9 @@ export function generateSVG(opts: ExportOptions): string {
       if (rotation) parts.push(`rotate(${rotation},${(cx-tx).toFixed(2)},${(cy-ty).toFixed(2)})`)
       if (parts.length) transformAttr = ` transform="${parts.join(' ')}"`
     } else {
-      transformAttr = rotation ? ` transform="rotate(${rotation}, ${cx}, ${cy})"` : ''
+      // shape.x / shape.y = local origin in canvas space (Konva rotates around this point)
+      const rx = shape.x || 0, ry = shape.y || 0
+      transformAttr = rotation ? ` transform="rotate(${rotation}, ${rx}, ${ry})"` : ''
     }
 
     let inner = ''

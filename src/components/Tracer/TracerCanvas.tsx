@@ -552,38 +552,25 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
         updateShape(id, { radiusX:(shape.radiusX||50)*sx, radiusY:(shape.radiusY||50)*sy, rotation: node.rotation() })
       } else if (shape.points && shape.points.length >= 2) {
         // polygon / freehand / curve / line
-        // Bake full transform (translate + rotate + scale) into points.
-        // Only reset scale on the node — let React re-render handle x/y/rotation
-        // (manually resetting the node position causes snap-back before React updates)
+        // Scale points in local space, store x/y/rotation as-is from Transformer
         const sx = node.scaleX(), sy = node.scaleY()
-        const dx = node.x(),     dy = node.y()
-        const rad = (node.rotation() * Math.PI) / 180
-        const cos = Math.cos(rad), sin = Math.sin(rad)
         node.scaleX(1); node.scaleY(1)
-        const newPts: number[] = []
-        for (let i = 0; i < shape.points.length; i += 2) {
-          const lx = shape.points[i] * sx, ly = shape.points[i + 1] * sy
-          newPts.push(lx * cos - ly * sin + dx)
-          newPts.push(lx * sin + ly * cos + dy)
-        }
-        updateShape(id, { x: 0, y: 0, points: newPts, rotation: 0 })
-      } else if ((shape as any).nodes) {
-        // bezier — bake full transform into node positions and handles
-        const sx = node.scaleX(), sy = node.scaleY()
-        const dx = node.x(),     dy = node.y()
-        const rad = (node.rotation() * Math.PI) / 180
-        const cos = Math.cos(rad), sin = Math.sin(rad)
-        node.scaleX(1); node.scaleY(1)
-        const bake = (lx: number, ly: number) => ({
-          x: lx * sx * cos - ly * sy * sin + dx,
-          y: lx * sx * sin + ly * sy * cos + dy,
+        updateShape(id, {
+          x: node.x(), y: node.y(),
+          points: shape.points.map((v, i) => i % 2 === 0 ? v * sx : v * sy),
+          rotation: node.rotation()
         })
+      } else if ((shape as any).nodes) {
+        // bezier — scale nodes in local space, store x/y/rotation as-is
+        const sx = node.scaleX(), sy = node.scaleY()
+        node.scaleX(1); node.scaleY(1)
+        const sc = (lx: number, ly: number) => ({ x: lx * sx, y: ly * sy })
         const newNodes = ((shape as any).nodes as BezierNode[]).map(n => ({
-          ...bake(n.x, n.y),
-          handleIn:  n.handleIn  ? bake(n.handleIn.x,  n.handleIn.y)  : undefined,
-          handleOut: n.handleOut ? bake(n.handleOut.x, n.handleOut.y) : undefined,
+          ...sc(n.x, n.y),
+          handleIn:  n.handleIn  ? sc(n.handleIn.x,  n.handleIn.y)  : undefined,
+          handleOut: n.handleOut ? sc(n.handleOut.x, n.handleOut.y) : undefined,
         }))
-        updateShape(id, { x: 0, y: 0, nodes: newNodes, rotation: 0 } as any)
+        updateShape(id, { x: node.x(), y: node.y(), nodes: newNodes, rotation: node.rotation() } as any)
       } else {
         node.scaleX(1); node.scaleY(1)
         updateShape(id, { x: node.x(), y: node.y(), rotation: node.rotation() })
