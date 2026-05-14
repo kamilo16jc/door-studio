@@ -550,6 +550,22 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
         const sx = node.scaleX(), sy = node.scaleY()
         node.scaleX(1); node.scaleY(1)
         updateShape(id, { radiusX:(shape.radiusX||50)*sx, radiusY:(shape.radiusY||50)*sy, rotation: node.rotation() })
+      } else if (shape.points && shape.points.length >= 2) {
+        // polygon / freehand / curve / line — scale all points
+        const sx = node.scaleX(), sy = node.scaleY()
+        node.scaleX(1); node.scaleY(1)
+        const scaledPts = shape.points.map((v, i) => i % 2 === 0 ? v * sx : v * sy)
+        updateShape(id, { x: node.x(), y: node.y(), points: scaledPts, rotation: node.rotation() })
+      } else if ((shape as any).nodes) {
+        // bezier — scale all node positions and handles
+        const sx = node.scaleX(), sy = node.scaleY()
+        node.scaleX(1); node.scaleY(1)
+        const scaledNodes = ((shape as any).nodes as BezierNode[]).map(n => ({
+          x: n.x * sx, y: n.y * sy,
+          handleIn:  n.handleIn  ? { x: n.handleIn.x  * sx, y: n.handleIn.y  * sy } : undefined,
+          handleOut: n.handleOut ? { x: n.handleOut.x * sx, y: n.handleOut.y * sy } : undefined,
+        }))
+        updateShape(id, { x: node.x(), y: node.y(), nodes: scaledNodes, rotation: node.rotation() } as any)
       } else {
         node.scaleX(1); node.scaleY(1)
         updateShape(id, { x: node.x(), y: node.y(), rotation: node.rotation() })
@@ -1052,8 +1068,7 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
             <Transformer
               ref={trRef}
               rotateEnabled={true}
-              enabledAnchors={hasPolygon ? [] : undefined}
-              boundBoxFunc={(!multiSel && !hasPolygon) ? (o,n) => (n.width<5||n.height<5?o:n) : undefined}
+              boundBoxFunc={!multiSel ? (o,n) => (n.width<5||n.height<5?o:n) : undefined}
               onTransformEnd={onTransformEnd}
             />
           </Layer>
