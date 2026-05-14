@@ -552,15 +552,14 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
         updateShape(id, { radiusX:(shape.radiusX||50)*sx, radiusY:(shape.radiusY||50)*sy, rotation: node.rotation() })
       } else if (shape.points && shape.points.length >= 2) {
         // polygon / freehand / curve / line
-        // Bake full transform (translate + rotate + scale) into points so that
-        // x=0, y=0, rotation=0 always — avoids double-offset bug in SVG export
+        // Bake full transform (translate + rotate + scale) into points.
+        // Only reset scale on the node — let React re-render handle x/y/rotation
+        // (manually resetting the node position causes snap-back before React updates)
         const sx = node.scaleX(), sy = node.scaleY()
         const dx = node.x(),     dy = node.y()
         const rad = (node.rotation() * Math.PI) / 180
         const cos = Math.cos(rad), sin = Math.sin(rad)
         node.scaleX(1); node.scaleY(1)
-        node.x(0);      node.y(0)
-        node.rotation(0)
         const newPts: number[] = []
         for (let i = 0; i < shape.points.length; i += 2) {
           const lx = shape.points[i] * sx, ly = shape.points[i + 1] * sy
@@ -575,8 +574,6 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
         const rad = (node.rotation() * Math.PI) / 180
         const cos = Math.cos(rad), sin = Math.sin(rad)
         node.scaleX(1); node.scaleY(1)
-        node.x(0);      node.y(0)
-        node.rotation(0)
         const bake = (lx: number, ly: number) => ({
           x: lx * sx * cos - ly * sy * sin + dx,
           y: lx * sx * sin + ly * sy * cos + dy,
