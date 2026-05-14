@@ -5,7 +5,8 @@ import {
   MousePointer2, Square, Circle, Minus, Triangle,
   PenLine, Pencil, Trash2, RotateCcw, ImagePlus,
   ZoomIn, ZoomOut, Grid3X3, Diamond, ArrowRight,
-  RotateCw, FlipHorizontal, FlipVertical, Copy, Spline, Pen, Octagon, Layers
+  RotateCw, FlipHorizontal, FlipVertical, Copy, Spline, Pen, Octagon, Layers,
+  ChevronUp, ChevronDown, ChevronsUp, ChevronsDown
 } from 'lucide-react'
 import { archRectToPath, chamferRectToPath } from '../../lib/svgFilters'
 
@@ -105,7 +106,9 @@ export default function TracerToolbar({ showGrid, onToggleGrid, strokeWidth, onS
     canvasScale, setCanvasScale,
     canvasWidth, canvasHeight,
     setCanvasSize, clearAll,
-    shapes, selectedShapeIds, updateShape, addShape
+    shapes, selectedShapeIds, updateShape, addShape,
+    moveShapeUp, moveShapeDown, moveShapeToFront, moveShapeToBack,
+    selectShape
   } = useTracerStore()
 
   const selectedShapes = shapes.filter(s => selectedShapeIds.includes(s.id))
@@ -442,6 +445,42 @@ export default function TracerToolbar({ showGrid, onToggleGrid, strokeWidth, onS
             )}
 
             {/* Duplicar */}
+            {/* Layer order buttons — only when 1 shape selected */}
+            {selectedShapes.length === 1 && (() => {
+              const id = selectedShapes[0].id
+              const idx = shapes.findIndex(s => s.id === id)
+              return (
+                <div className="space-y-1 pt-1 border-t border-gray-100">
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Orden de capas</p>
+                  <div className="grid grid-cols-4 gap-1">
+                    <button title="Al fondo" onClick={() => moveShapeToBack(id)} disabled={idx === 0}
+                      className="flex flex-col items-center gap-0.5 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-30 transition-all">
+                      <ChevronsDown size={13} className="text-gray-500"/>
+                      <span className="text-[9px] text-gray-400">Fondo</span>
+                    </button>
+                    <button title="Bajar capa" onClick={() => moveShapeDown(id)} disabled={idx === 0}
+                      className="flex flex-col items-center gap-0.5 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-30 transition-all">
+                      <ChevronDown size={13} className="text-gray-500"/>
+                      <span className="text-[9px] text-gray-400">Bajar</span>
+                    </button>
+                    <button title="Subir capa" onClick={() => moveShapeUp(id)} disabled={idx === shapes.length - 1}
+                      className="flex flex-col items-center gap-0.5 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-30 transition-all">
+                      <ChevronUp size={13} className="text-gray-500"/>
+                      <span className="text-[9px] text-gray-400">Subir</span>
+                    </button>
+                    <button title="Al frente" onClick={() => moveShapeToFront(id)} disabled={idx === shapes.length - 1}
+                      className="flex flex-col items-center gap-0.5 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-30 transition-all">
+                      <ChevronsUp size={13} className="text-gray-500"/>
+                      <span className="text-[9px] text-gray-400">Frente</span>
+                    </button>
+                  </div>
+                  <p className="text-[9px] text-gray-300 text-center">
+                    Capa {idx + 1} de {shapes.length}
+                  </p>
+                </div>
+              )
+            })()}
+
             <button
               onClick={() => {
                 const OFFSET = 20
@@ -529,6 +568,70 @@ export default function TracerToolbar({ showGrid, onToggleGrid, strokeWidth, onS
 
       <div className="border-t border-gray-100"/>
       <AutoTracer />
+
+      {/* ── Panel de capas ─────────────────────────────────────── */}
+      {shapes.length > 0 && (
+        <>
+          <div className="border-t border-gray-100"/>
+          <section>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+              <Layers size={11}/> Capas ({shapes.length})
+            </p>
+            <div className="space-y-0.5 max-h-48 overflow-y-auto">
+              {/* Reverse: top of list = front (last in array) */}
+              {[...shapes].reverse().map((shape, revIdx) => {
+                const idx = shapes.length - 1 - revIdx
+                const isSelected = selectedShapeIds.includes(shape.id)
+                const typeLabel: Record<string, string> = {
+                  rect: 'Rect', ellipse: 'Elipse', line: 'Línea',
+                  polygon: 'Polígono', freehand: 'Libre', curve: 'Curva',
+                  bezier: 'Bezier', archrect: 'Arco', chamferedrect: 'Bisel',
+                  compound: 'Anillo'
+                }
+                return (
+                  <div key={shape.id}
+                    onClick={() => selectShape(shape.id)}
+                    className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg cursor-pointer transition-all group ${
+                      isSelected
+                        ? shape.moduleType === 'marco'
+                          ? 'bg-blue-50 border border-blue-200'
+                          : 'bg-amber-50 border border-amber-200'
+                        : 'hover:bg-gray-50 border border-transparent'
+                    }`}>
+                    {/* Layer number */}
+                    <span className="text-[9px] text-gray-300 w-4 text-right shrink-0">{idx + 1}</span>
+                    {/* Module color dot */}
+                    <span className={`w-2 h-2 rounded-sm shrink-0 ${
+                      shape.moduleType === 'marco' ? 'bg-blue-400' : 'bg-amber-400'
+                    }`}/>
+                    {/* Type label */}
+                    <span className={`text-xs flex-1 truncate ${
+                      isSelected
+                        ? shape.moduleType === 'marco' ? 'text-blue-700 font-semibold' : 'text-amber-700 font-semibold'
+                        : 'text-gray-500'
+                    }`}>
+                      {typeLabel[shape.shapeType] || shape.shapeType}
+                    </span>
+                    {/* Quick move buttons */}
+                    <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button title="Bajar" onClick={e => { e.stopPropagation(); moveShapeDown(shape.id) }}
+                        disabled={idx === 0}
+                        className="p-0.5 hover:bg-gray-200 rounded disabled:opacity-30">
+                        <ChevronDown size={10} className="text-gray-500"/>
+                      </button>
+                      <button title="Subir" onClick={e => { e.stopPropagation(); moveShapeUp(shape.id) }}
+                        disabled={idx === shapes.length - 1}
+                        className="p-0.5 hover:bg-gray-200 rounded disabled:opacity-30">
+                        <ChevronUp size={10} className="text-gray-500"/>
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        </>
+      )}
 
       <div className="mt-auto border-t border-gray-100 pt-3">
         <button onClick={clearAll}

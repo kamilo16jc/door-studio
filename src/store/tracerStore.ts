@@ -35,6 +35,12 @@ interface TracerState {
   setIsDrawing: (drawing: boolean) => void
   setDrawingPoints: (points: number[]) => void
   clearAll: () => void
+  // Layer ordering
+  moveShapeUp:      (id: string) => void
+  moveShapeDown:    (id: string) => void
+  moveShapeToFront: (id: string) => void
+  moveShapeToBack:  (id: string) => void
+  reorderShapes:    (from: number, to: number) => void
 }
 
 export const useTracerStore = create<TracerState>()(
@@ -111,7 +117,39 @@ export const useTracerStore = create<TracerState>()(
 
   setIsDrawing: (drawing) => set({ isDrawing: drawing }),
   setDrawingPoints: (points) => set({ drawingPoints: points }),
-  clearAll: () => set({ shapes: [], selectedShapeId: null, selectedShapeIds: [], isDrawing: false, drawingPoints: [] })
+  clearAll: () => set({ shapes: [], selectedShapeId: null, selectedShapeIds: [], isDrawing: false, drawingPoints: [] }),
+
+  // Layer ordering — array index = render order (0 = bottom, last = top)
+  moveShapeUp: (id) => set((state) => {
+    const arr = [...state.shapes]
+    const i = arr.findIndex(s => s.id === id)
+    if (i < arr.length - 1) { [arr[i], arr[i+1]] = [arr[i+1], arr[i]] }
+    return { shapes: arr }
+  }),
+  moveShapeDown: (id) => set((state) => {
+    const arr = [...state.shapes]
+    const i = arr.findIndex(s => s.id === id)
+    if (i > 0) { [arr[i], arr[i-1]] = [arr[i-1], arr[i]] }
+    return { shapes: arr }
+  }),
+  moveShapeToFront: (id) => set((state) => {
+    const arr = [...state.shapes]
+    const i = arr.findIndex(s => s.id === id)
+    if (i !== -1) { arr.push(arr.splice(i, 1)[0]) }
+    return { shapes: arr }
+  }),
+  moveShapeToBack: (id) => set((state) => {
+    const arr = [...state.shapes]
+    const i = arr.findIndex(s => s.id === id)
+    if (i !== -1) { arr.unshift(arr.splice(i, 1)[0]) }
+    return { shapes: arr }
+  }),
+  reorderShapes: (from, to) => set((state) => {
+    const arr = [...state.shapes]
+    const [moved] = arr.splice(from, 1)
+    arr.splice(to, 0, moved)
+    return { shapes: arr }
+  })
     }),
     {
       name: 'door-studio-tracer',
