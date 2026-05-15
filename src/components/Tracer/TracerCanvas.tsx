@@ -78,6 +78,8 @@ const ShapeEl = React.forwardRef<Konva.Shape, {
     onClick:    onSelect,
     onDblClick: onEditNodes,
     rotation:   shape.rotation || 0,
+    scaleX: 1,
+    scaleY: 1,
     onDragStart,
     onDragMove,
     onDragEnd,
@@ -517,15 +519,19 @@ export default function TracerCanvas({ showGrid, strokeWidth }: { showGrid?: boo
   }, [activeTool])
 
   // ── Sync Transformer con shapes seleccionadas ─────────────────────────────
+  // Hide Transformer while node editor is open — its transparent click-trap
+  // layer sits above the Transformer anchors and would intercept resize drags.
   useEffect(() => {
     const tr = trRef.current
     if (!tr) return
-    const nodes = selectedShapeIds
-      .map(id => shapeRefs.current.get(id))
-      .filter((n): n is Konva.Shape => !!n)
+    const nodes = editingShapeId
+      ? []
+      : selectedShapeIds
+          .map(id => shapeRefs.current.get(id))
+          .filter((n): n is Konva.Shape => !!n)
     tr.nodes(nodes)
     tr.getLayer()?.batchDraw()
-  }, [selectedShapeIds])
+  }, [selectedShapeIds, editingShapeId])
 
   // ── Transform end: normaliza escala y guarda en store ──────────────────────
   const onTransformEnd = useCallback(() => {
