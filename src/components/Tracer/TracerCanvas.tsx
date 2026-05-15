@@ -78,8 +78,6 @@ const ShapeEl = React.forwardRef<Konva.Shape, {
     onClick:    onSelect,
     onDblClick: onEditNodes,
     rotation:   shape.rotation || 0,
-    scaleX: 1,
-    scaleY: 1,
     onDragStart,
     onDragMove,
     onDragEnd,
