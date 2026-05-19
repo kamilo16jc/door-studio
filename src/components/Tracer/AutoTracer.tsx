@@ -104,12 +104,29 @@ export default function AutoTracer() {
     setMode('running')
     setError('')
     try {
+      setProgress('Midiendo imagen...')
+      // CLAVE: trazar a la resolución/aspecto REAL de la imagen.
+      // Si se traza con el canvas por defecto (800x600) la imagen se aplasta
+      // y el resultado queda deformado, facetado y con regiones fusionadas.
+      const dims = await new Promise<{ w: number; h: number }>((resolve, reject) => {
+        const img = new Image()
+        img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight })
+        img.onerror = reject
+        img.src = photoBackground
+      })
+      const MAX = 2000
+      const scale = Math.min(1, MAX / Math.max(dims.w, dims.h))
+      const tw = Math.round(dims.w * scale)
+      const th = Math.round(dims.h * scale)
+      // Ajustar el canvas para que coincida con la imagen (sin deformar)
+      setCanvasSize(tw, th)
+
       setProgress('Analizando regiones cerradas...')
       const found = await autoTraceRegions(
-        photoBackground, canvasWidth, canvasHeight,
+        photoBackground, tw, th,
         (msg) => setProgress(msg)
       )
-      const preview = await generateEdgePreview(photoBackground, canvasWidth, canvasHeight)
+      const preview = await generateEdgePreview(photoBackground, tw, th)
       setDetectedShapes(found)
       setEdgePreview(preview)
       setMode('preview')
