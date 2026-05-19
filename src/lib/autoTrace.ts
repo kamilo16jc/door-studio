@@ -10,6 +10,11 @@ async function loadImageData(src: string, w: number, h: number): Promise<ImageDa
       const c = document.createElement('canvas')
       c.width = w; c.height = h
       const ctx = c.getContext('2d')!
+      // CLAVE: rellenar blanco antes de dibujar. Un SVG (u otra imagen con
+      // transparencia) deja las zonas transparentes en negro → el umbral las
+      // leería como líneas y no detectaría ninguna región.
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, w, h)
       ctx.drawImage(img, 0, 0, w, h)
       resolve(ctx.getImageData(0, 0, w, h))
     }
