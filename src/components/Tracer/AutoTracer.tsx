@@ -1,12 +1,12 @@
 import { useState, useRef } from 'react'
 import axios from 'axios'
 import { useTracerStore } from '../../store/tracerStore'
-import { autoTraceFromSVG, autoTraceFromMasks, generateEdgePreview } from '../../lib/autoTrace'
-import { Wand2, Cpu, Eye, Check, X, RefreshCw, Layers, Bot } from 'lucide-react'
+import { autoTraceFromSVG, autoTraceFromMasks, autoTraceRegions, generateEdgePreview } from '../../lib/autoTrace'
+import { Wand2, Cpu, Eye, Check, X, RefreshCw, Layers, Bot, ScanSearch } from 'lucide-react'
 import { TracedShape } from '../../types'
 
 type Mode = 'idle' | 'running' | 'preview' | 'error'
-type Tab = 'potrace' | 'claude' | 'ai'
+type Tab = 'potrace' | 'claude' | 'ai' | 'regions'
 
 export default function AutoTracer() {
   const {
@@ -98,6 +98,27 @@ export default function AutoTracer() {
     }
   }
 
+  // ─── Auto-trazar por regiones cerradas (Flood Fill + CCL) ──────────────────
+  const runRegionsTrace = async () => {
+    if (!photoBackground) return
+    setMode('running')
+    setError('')
+    try {
+      setProgress('Analizando regiones cerradas...')
+      const found = await autoTraceRegions(
+        photoBackground, canvasWidth, canvasHeight,
+        (msg) => setProgress(msg)
+      )
+      const preview = await generateEdgePreview(photoBackground, canvasWidth, canvasHeight)
+      setDetectedShapes(found)
+      setEdgePreview(preview)
+      setMode('preview')
+    } catch (e: any) {
+      setError('Error detectando regiones: ' + e.message)
+      setMode('error')
+    }
+  }
+
   // ─── Claude polling ──────────────────────────────────────────────────────────
   const startClaudePolling = () => {
     setClaudeStatus('polling')
@@ -180,9 +201,17 @@ export default function AutoTracer() {
       </div>
 
       {/* Tab selector */}
-      <div className="flex gap-1 bg-white border border-amber-200 rounded p-0.5">
+      <div className="flex gap-1 bg-white border border-amber-200 rounded p-0.5 flex-wrap">
         <button
-          onClick={() => setActiveTab('potrace')}
+          onClick={() => { setActiveTab('regions'); setMode('idle'); setError('') }}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded text-xs font-medium transition-all ${
+            activeTab === 'regions' ? 'bg-amber-500 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <ScanSearch size={12}/> Regiones
+        </button>
+        <button
+          onClick={() => { setActiveTab('potrace'); setMode('idle'); setError('') }}
           className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded text-xs font-medium transition-all ${
             activeTab === 'potrace' ? 'bg-amber-500 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'
           }`}
@@ -198,7 +227,7 @@ export default function AutoTracer() {
           <Bot size={12}/> Claude
         </button>
         <button
-          onClick={() => setActiveTab('ai')}
+          onClick={() => { setActiveTab('ai'); setMode('idle'); setError('') }}
           className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded text-xs font-medium transition-all ${
             activeTab === 'ai' ? 'bg-amber-500 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'
           }`}
@@ -206,6 +235,38 @@ export default function AutoTracer() {
           <Wand2 size={12}/> Con IA
         </button>
       </div>
+
+      {/* ── Regiones tab ── */}
+      {activeTab === 'regions' && (
+        <>
+          {mode === 'idle' && (
+            <div className="space-y-2">
+              <p className="text-xs text-amber-700">
+                Detecta cada región cerrada de la imagen como una forma independiente. Ideal para puertas con paneles.
+              </p>
+              <button
+                onClick={runRegionsTrace}
+                className="w-full flex items-center justify-center gap-2 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded text-xs font-semibold transition-colors"
+              >
+                <ScanSearch size={13}/> Detectar regiones
+              </button>
+            </div>
+          )}
+          {mode === 'running' && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <RefreshCw size={13} className="text-amber-600 animate-spin"/>
+                <span className="text-xs text-amber-700">{progress}</span>
+              </div>
+              <div className="w-full bg-amber-100 rounded-full h-1.5">
+                <div className="bg-amber-500 h-1.5 rounded-full animate-pulse w-2/3"/>
+              </div>
+            </div>
+          )}
+          {mode === 'preview' && renderPreview()}
+          {mode === 'error' && renderError()}
+        </>
+      )}
 
       {/* ── Potrace tab ── */}
       {activeTab === 'potrace' && (
