@@ -129,6 +129,7 @@ function labelComponents(binary: Uint8Array, w: number, h: number): Int32Array {
 // ─── Recolectar bounding boxes por componente ─────────────────────────────────
 interface CompInfo {
   minX: number; maxX: number; minY: number; maxY: number; count: number
+  sumX: number; sumY: number  // para calcular el centroide
 }
 function collectBBoxes(labels: Int32Array, w: number, h: number): Map<number, CompInfo> {
   const comps = new Map<number, CompInfo>()
@@ -136,11 +137,11 @@ function collectBBoxes(labels: Int32Array, w: number, h: number): Map<number, Co
     for (let x = 0; x < w; x++) {
       const l = labels[y * w + x]
       if (l < 0) continue
-      if (!comps.has(l)) comps.set(l, { minX: x, maxX: x, minY: y, maxY: y, count: 0 })
+      if (!comps.has(l)) comps.set(l, { minX: x, maxX: x, minY: y, maxY: y, count: 0, sumX: 0, sumY: 0 })
       const c = comps.get(l)!
       if (x < c.minX) c.minX = x;  if (x > c.maxX) c.maxX = x
       if (y < c.minY) c.minY = y;  if (y > c.maxY) c.maxY = y
-      c.count++
+      c.count++; c.sumX += x; c.sumY += y
     }
   }
   return comps
@@ -224,15 +225,23 @@ function classifyShape(comp: CompInfo): 'rect' | 'ellipse' | 'polygon' {
   // Rect: casi perfecto ≥ 0.90
   if (fill >= 0.90) return 'rect'
 
-  // Ellipse: verificar con fórmula π*rX*rY — cubre círculos, óvalos y semicírculos
-  if (fill >= 0.55 && fill < 0.90) {
+  // Ellipse: SOLO elipses/círculos completos y SIMÉTRICOS en ambos ejes.
+  // Una cuña, un arco o un semicírculo NO son simétricos → van como polígono.
+  if (fill >= 0.68 && fill < 0.90) {
     const rX = bW / 2, rY = bH / 2
     const ellipseArea = Math.PI * rX * rY
-    const ratio = comp.count / ellipseArea
-    // ratio ≈ 1.0 = elipse completa, ≈ 0.5 = media elipse (arco)
-    if (ratio >= 0.38 && ratio <= 1.15) return 'ellipse'
+    const ratio = comp.count / ellipseArea  // ≈ 1.0 para elipse completa
+    if (ratio >= 0.85 && ratio <= 1.15) {
+      // Verificar simetría: el centroide debe estar en el centro del bbox
+      const cx = comp.sumX / comp.count
+      const cy = comp.sumY / comp.count
+      const offX = Math.abs(cx - (comp.minX + bW / 2)) / bW
+      const offY = Math.abs(cy - (comp.minY + bH / 2)) / bH
+      if (offX < 0.06 && offY < 0.06) return 'ellipse'
+    }
   }
 
+  // Todo lo demás (cuñas, arcos, semicírculos, formas irregulares) → polígono
   return 'polygon'
 }
 
