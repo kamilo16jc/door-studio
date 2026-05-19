@@ -18,15 +18,60 @@ async function loadImageData(src: string, w: number, h: number): Promise<ImageDa
   })
 }
 
+// ─── Umbral adaptativo de Otsu ────────────────────────────────────────────────
+// Mucho mejor que umbral fijo para imágenes con fondos beige/crema
+function otsuThreshold(data: ImageData): number {
+  const hist = new Int32Array(256)
+  const n = data.width * data.height
+  for (let i = 0; i < n; i++) {
+    const p = i * 4
+    const g = Math.round(0.299 * data.data[p] + 0.587 * data.data[p+1] + 0.114 * data.data[p+2])
+    hist[g]++
+  }
+  let sum = 0
+  for (let i = 0; i < 256; i++) sum += i * hist[i]
+  let sumB = 0, wB = 0, maxVar = 0, thr = 128
+  for (let t = 0; t < 256; t++) {
+    wB += hist[t]; if (!wB) continue
+    const wF = n - wB; if (!wF) break
+    sumB += t * hist[t]
+    const mB = sumB / wB, mF = (sum - sumB) / wF
+    const v = wB * wF * (mB - mF) * (mB - mF)
+    if (v > maxVar) { maxVar = v; thr = t }
+  }
+  // Bajamos el umbral para asegurarnos de capturar bien las líneas marrones oscuras
+  return Math.max(thr - 15, 80)
+}
+
 // ─── Umbralizar a blanco/negro ────────────────────────────────────────────────
-function threshold(data: ImageData, thresh = 160): Uint8Array {
+function threshold(data: ImageData, thresh?: number): Uint8Array {
+  const t = thresh ?? otsuThreshold(data)
   const binary = new Uint8Array(data.width * data.height)
   for (let i = 0; i < binary.length; i++) {
     const p = i * 4
     const gray = 0.299 * data.data[p] + 0.587 * data.data[p+1] + 0.114 * data.data[p+2]
-    binary[i] = gray > thresh ? 1 : 0   // 1 = blanco (espacio), 0 = negro (línea)
+    binary[i] = gray > t ? 1 : 0   // 1 = blanco (espacio), 0 = negro (línea)
   }
   return binary
+}
+
+// ─── Dilatar píxeles oscuros para cerrar pequeñas grietas en líneas ──────────
+// binary: 1=blanco, 0=oscuro. Dilata los 0s para sellar gaps.
+function dilateLines(binary: Uint8Array, w: number, h: number, r = 1): Uint8Array {
+  const out = binary.slice()
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (binary[y * w + x]) continue // pixel blanco, no dilatar
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          const ny = y + dy, nx = x + dx
+          if (ny >= 0 && ny < h && nx >= 0 && nx < w)
+            out[ny * w + nx] = 0
+        }
+      }
+    }
+  }
+  return out
 }
 
 // ─── Flood fill iterativo (BFS) ───────────────────────────────────────────────
@@ -101,14 +146,39 @@ function collectBBoxes(labels: Int32Array, w: number, h: number): Map<number, Co
   return comps
 }
 
-// ─── Extraer contorno real de un componente (scan-line polygon) ───────────────
+// ─── Clasificar forma de un componente ───────────────────────────────────────
+// Retorna: 'rect' | 'ellipse' | 'polygon'
+// NOTA: Un semicírculo tiene fill ratio ≈ π/4 ≈ 0.785 — NO es rect
+function classifyShape(comp: CompInfo): 'rect' | 'ellipse' | 'polygon' {
+  const bW = comp.maxX - comp.minX
+  const bH = comp.maxY - comp.minY
+  const bboxArea = bW * bH
+  if (bboxArea === 0) return 'rect'
+  const fill = comp.count / bboxArea
+
+  // Rect: casi perfecto ≥ 0.90
+  if (fill >= 0.90) return 'rect'
+
+  // Ellipse completa: fill ≈ π/4 = 0.785 → rango [0.68, 0.90)
+  // Semicírculo (arco): fill ≈ π/4 en su bbox → mismo rango
+  if (fill >= 0.62 && fill < 0.90) {
+    // Verificar con fórmula de elipse: pixeles_esperados ≈ π * rX * rY
+    const rX = bW / 2, rY = bH / 2
+    const ellipseArea = Math.PI * rX * rY
+    const ratio = comp.count / ellipseArea
+    // ratio ≈ 1.0 = elipse completa, ≈ 0.5 = media elipse (arco)
+    if (ratio >= 0.40 && ratio <= 1.15) return 'ellipse'
+  }
+
+  return 'polygon'
+}
+
+// ─── Trazar contorno mejorado (scan horizontal + vertical combinado) ──────────
 function traceContour(labels: Int32Array, label: number, w: number, h: number,
                       bbox: CompInfo, step = 2): number[] {
-  // Top contour: for each column, find topmost pixel
-  // Bottom contour: for each column, find bottommost pixel
+  // Top/Bottom por columna (captura curvas horizontales como arcos)
   const topPts: [number, number][] = []
   const botPts: [number, number][] = []
-
   for (let x = bbox.minX; x <= bbox.maxX; x += step) {
     let top = -1, bot = -1
     for (let y = bbox.minY; y <= bbox.maxY; y++) {
@@ -117,12 +187,37 @@ function traceContour(labels: Int32Array, label: number, w: number, h: number,
     if (top >= 0) { topPts.push([x, top]); botPts.push([x, bot]) }
   }
 
-  if (topPts.length < 2) return []
+  // Left/Right por fila (captura curvas verticales como arcos laterales)
+  const leftPts: [number, number][] = []
+  const rightPts: [number, number][] = []
+  for (let y = bbox.minY; y <= bbox.maxY; y += step) {
+    let left = -1, right = -1
+    for (let x = bbox.minX; x <= bbox.maxX; x++) {
+      if (labels[y * w + x] === label) { if (left < 0) left = x; right = x }
+    }
+    if (left >= 0) { leftPts.push([left, y]); rightPts.push([right, y]) }
+  }
 
-  // Combine: top left→right, bottom right→left
-  const pts: number[] = []
-  for (const [x, y] of topPts) pts.push(x, y)
-  for (const [x, y] of botPts.reverse()) pts.push(x, y)
+  // Detectar si la forma tiene curvatura significativa en X vs Y
+  const topVariance = topPts.reduce((s, [, y]) => s + y, 0) / (topPts.length || 1)
+  const topDiff = topPts.reduce((s, [, y]) => s + Math.abs(y - topVariance), 0)
+  const leftVariance = leftPts.reduce((s, [x]) => s + x, 0) / (leftPts.length || 1)
+  const leftDiff = leftPts.reduce((s, [x]) => s + Math.abs(x - leftVariance), 0)
+
+  let pts: number[]
+  if (topDiff >= leftDiff) {
+    // Curvatura principalmente en top/bottom (ej. arco, semicírculo)
+    if (topPts.length < 2) return []
+    pts = []
+    for (const [x, y] of topPts) pts.push(x, y)
+    for (const [x, y] of [...botPts].reverse()) pts.push(x, y)
+  } else {
+    // Curvatura principalmente en lados izq/der
+    if (leftPts.length < 2) return []
+    pts = []
+    for (const [x, y] of leftPts) pts.push(x, y)
+    for (const [x, y] of [...rightPts].reverse()) pts.push(x, y)
+  }
   return pts
 }
 
@@ -151,16 +246,10 @@ function dpSimplify(pts: number[], epsilon: number): number[] {
   return out
 }
 
-// ─── Detectar si un componente es aproximadamente rectangular ────────────────
-function isRectangular(comp: CompInfo, fillRatio = 0.75): boolean {
-  const bboxArea = (comp.maxX - comp.minX) * (comp.maxY - comp.minY)
-  if (bboxArea === 0) return true
-  return comp.count / bboxArea >= fillRatio
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // API PRINCIPAL: Auto-trazar por regiones cerradas
 // Cada región blanca cerrada en la imagen = 1 TracedShape independiente
+// Mejoras v2: umbral Otsu, detección elipse/arco, dilation de líneas
 // ═══════════════════════════════════════════════════════════════════════════════
 export async function autoTraceRegions(
   src: string,
@@ -171,24 +260,28 @@ export async function autoTraceRegions(
   onProgress?.('Cargando imagen...')
   const imgData = await loadImageData(src, canvasW, canvasH)
 
-  onProgress?.('Umbralando a blanco/negro...')
-  const binary = threshold(imgData, 160)
+  onProgress?.('Calculando umbral adaptativo (Otsu)...')
+  // Umbral adaptativo: mucho mejor para puertas beige/crema con líneas marrones
+  const binary = threshold(imgData)
+
+  onProgress?.('Sellando grietas en líneas...')
+  // Dilatar líneas oscuras r=1 para cerrar pequeños gaps y asegurar regiones selladas
+  const sealed = dilateLines(binary, canvasW, canvasH, 1)
 
   onProgress?.('Identificando fondo exterior...')
-  // Semillas: todos los píxeles blancos en los 4 bordes del canvas
   const seeds: number[] = []
   for (let x = 0; x < canvasW; x++) {
-    if (binary[x]) seeds.push(x)                          // fila top
-    if (binary[(canvasH-1)*canvasW+x]) seeds.push((canvasH-1)*canvasW+x) // fila bottom
+    if (sealed[x]) seeds.push(x)
+    if (sealed[(canvasH-1)*canvasW+x]) seeds.push((canvasH-1)*canvasW+x)
   }
   for (let y = 1; y < canvasH-1; y++) {
-    if (binary[y*canvasW]) seeds.push(y*canvasW)           // col left
-    if (binary[y*canvasW+canvasW-1]) seeds.push(y*canvasW+canvasW-1) // col right
+    if (sealed[y*canvasW]) seeds.push(y*canvasW)
+    if (sealed[y*canvasW+canvasW-1]) seeds.push(y*canvasW+canvasW-1)
   }
-  const background = floodFill(binary, canvasW, canvasH, seeds)
+  const background = floodFill(sealed, canvasW, canvasH, seeds)
 
   onProgress?.('Aislando regiones cerradas...')
-  // Píxeles blancos que NO son fondo = regiones cerradas (paneles, vidrios, etc.)
+  // Usar el binary original (sin dilatar) para las regiones — más preciso
   const enclosed = new Uint8Array(canvasW * canvasH)
   for (let i = 0; i < enclosed.length; i++) {
     enclosed[i] = binary[i] && !background[i] ? 1 : 0
@@ -200,8 +293,9 @@ export async function autoTraceRegions(
 
   onProgress?.(`${comps.size} regiones encontradas — filtrando...`)
 
-  const minPixels = canvasW * canvasH * 0.002  // mínimo 0.2% del canvas
-  const maxPixels = canvasW * canvasH * 0.95   // máximo 95% (descarta el fondo)
+  // Reducido a 0.1% para capturar regiones pequeñas (piezas del abanico, etc.)
+  const minPixels = canvasW * canvasH * 0.001
+  const maxPixels = canvasW * canvasH * 0.95
 
   const sorted = Array.from(comps.entries())
     .filter(([, c]) => c.count >= minPixels && c.count <= maxPixels)
@@ -212,25 +306,39 @@ export async function autoTraceRegions(
   const shapes: TracedShape[] = []
 
   for (const [label, comp] of sorted) {
-    const w = comp.maxX - comp.minX
-    const h = comp.maxY - comp.minY
-    if (w < 4 || h < 4) continue
+    const bW = comp.maxX - comp.minX
+    const bH = comp.maxY - comp.minY
+    if (bW < 4 || bH < 4) continue
 
-    if (isRectangular(comp, 0.72)) {
-      // Región rectangular → usar rect exacto (más limpio)
+    const kind = classifyShape(comp)
+
+    if (kind === 'rect') {
       shapes.push({
         id: uuidv4(),
         moduleType: 'panel' as ModuleType,
         shapeType: 'rect',
         x: comp.minX, y: comp.minY,
-        width: w, height: h,
+        width: bW, height: bH,
+        fill: '', stroke: '#3B82F6', strokeWidth: 1.5
+      })
+    } else if (kind === 'ellipse') {
+      // Centro de la elipse
+      const cx = comp.minX + bW / 2
+      const cy = comp.minY + bH / 2
+      shapes.push({
+        id: uuidv4(),
+        moduleType: 'panel' as ModuleType,
+        shapeType: 'ellipse',
+        x: cx, y: cy,
+        radiusX: bW / 2,
+        radiusY: bH / 2,
         fill: '', stroke: '#3B82F6', strokeWidth: 1.5
       })
     } else {
       // Región curva/irregular → trazar contorno real
       const rawPts = traceContour(labels, label, canvasW, canvasH, comp, 2)
       if (rawPts.length < 8) continue
-      const simplified = dpSimplify(rawPts, 2)
+      const simplified = dpSimplify(rawPts, 1.5)  // epsilon menor = curvas más suaves
       if (simplified.length < 8) continue
       shapes.push({
         id: uuidv4(),
@@ -253,33 +361,32 @@ export async function autoTraceRegions(
 // ═══════════════════════════════════════════════════════════════════════════════
 export async function generateEdgePreview(src: string, w: number, h: number): Promise<string> {
   const imgData = await loadImageData(src, w, h)
-  const binary  = threshold(imgData, 160)
+  const binary  = threshold(imgData)
+  const sealed  = dilateLines(binary, w, h, 1)
   const seeds: number[] = []
   for (let x = 0; x < w; x++) {
-    if (binary[x]) seeds.push(x)
-    if (binary[(h-1)*w+x]) seeds.push((h-1)*w+x)
+    if (sealed[x]) seeds.push(x)
+    if (sealed[(h-1)*w+x]) seeds.push((h-1)*w+x)
   }
   for (let y = 1; y < h-1; y++) {
-    if (binary[y*w]) seeds.push(y*w)
-    if (binary[y*w+w-1]) seeds.push(y*w+w-1)
+    if (sealed[y*w]) seeds.push(y*w)
+    if (sealed[y*w+w-1]) seeds.push(y*w+w-1)
   }
-  const bg       = floodFill(binary, w, h, seeds)
+  const bg       = floodFill(sealed, w, h, seeds)
   const enclosed = new Uint8Array(w * h)
   for (let i = 0; i < enclosed.length; i++)
     enclosed[i] = binary[i] && !bg[i] ? 1 : 0
 
   const labels = labelComponents(enclosed, w, h)
   const comps  = collectBBoxes(labels, w, h)
-  const minPx  = w * h * 0.002
+  const minPx  = w * h * 0.001  // mismo umbral que en autoTraceRegions
 
   const out = new ImageData(w, h)
-  // Fondo oscuro
   for (let i = 0; i < w * h; i++) {
     const gray = binary[i] ? 240 : 40
     out.data[i*4]=gray; out.data[i*4+1]=gray; out.data[i*4+2]=gray; out.data[i*4+3]=255
   }
 
-  // Colorear regiones detectadas
   const palette = [[59,130,246],[16,185,129],[245,158,11],[239,68,68],[168,85,247],[20,184,166]]
   let ci = 0
   for (const [label, comp] of comps.entries()) {
@@ -289,7 +396,7 @@ export async function generateEdgePreview(src: string, w: number, h: number): Pr
       for (let x = comp.minX; x <= comp.maxX; x++) {
         if (labels[y*w+x] === label) {
           const i = y*w+x
-          out.data[i*4]=r; out.data[i*4+1]=g; out.data[i*4+2]=b; out.data[i*4+3]=180
+          out.data[i*4]=r; out.data[i*4+1]=g; out.data[i*4+2]=b; out.data[i*4+3]=200
         }
       }
     }
