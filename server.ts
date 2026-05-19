@@ -22,6 +22,17 @@ if (fs.existsSync(envPath)) {
   })
 }
 
+// ─── In-memory tracer queue (Claude → Frontend) ───────────────────────────────
+interface PendingTrace {
+  shapes: any[]
+  zones: any[]
+  canvasWidth: number
+  canvasHeight: number
+  photoBackground?: string
+  timestamp: number
+}
+let pendingTrace: PendingTrace | null = null
+
 const app = express()
 const PORT = 3001
 
@@ -258,6 +269,57 @@ app.post('/api/door/trace', upload.single('photo'), async (req, res) => {
   }
 })
 
+// ─── Genera 6 shapes para un panel biselado (madera + 4 molduras + vidrio) ────
+function buildBeveledPanel(x: number, y: number, w: number, h: number, bevel = 5, tipo = 'vidrio') {
+  return [
+    // 1. Fondo madera (el marco del panel)
+    { shapeType: 'rect', moduleType: 'panel', x, y, width: w, height: h, _tipo: 'madera' },
+    // 2. Bevel superior (moldura)
+    { shapeType: 'polygon', moduleType: 'panel', x: 0, y: 0,
+      points: [x, y, x+w, y, x+w-bevel, y+bevel, x+bevel, y+bevel], closed: true, _tipo: 'moldura' },
+    // 3. Bevel inferior (moldura)
+    { shapeType: 'polygon', moduleType: 'panel', x: 0, y: 0,
+      points: [x+bevel, y+h-bevel, x+w-bevel, y+h-bevel, x+w, y+h, x, y+h], closed: true, _tipo: 'moldura' },
+    // 4. Bevel izquierdo (moldura)
+    { shapeType: 'polygon', moduleType: 'panel', x: 0, y: 0,
+      points: [x, y, x+bevel, y+bevel, x+bevel, y+h-bevel, x, y+h], closed: true, _tipo: 'moldura' },
+    // 5. Bevel derecho (moldura)
+    { shapeType: 'polygon', moduleType: 'panel', x: 0, y: 0,
+      points: [x+w-bevel, y+bevel, x+w, y, x+w, y+h, x+w-bevel, y+h-bevel], closed: true, _tipo: 'moldura' },
+    // 6. Vidrio interior
+    { shapeType: 'rect', moduleType: 'panel', x: x+bevel, y: y+bevel,
+      width: w - 2*bevel, height: h - 2*bevel, _tipo: tipo },
+  ]
+}
+
+// ─── RUTA: Claude → Frontend (push shapes al canvas) ─────────────────────────
+app.post('/api/tracer/push', (req, res) => {
+  try {
+    const { shapes, zones, canvasWidth = 800, canvasHeight = 1200, photoBackground } = req.body
+    if (!Array.isArray(shapes) || shapes.length === 0)
+      return res.status(400).json({ error: 'Se requiere shapes[]' })
+    pendingTrace = { shapes, zones: zones || [], canvasWidth, canvasHeight, photoBackground, timestamp: Date.now() }
+    console.log(`[Tracer Push] ${shapes.length} shapes en cola para el canvas`)
+    res.json({ success: true, count: shapes.length })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── RUTA: Frontend poll (recibe shapes cuando Claude los envía) ───────────────
+app.get('/api/tracer/pull', (req, res) => {
+  if (!pendingTrace) return res.json({ pending: false })
+  // Solo devolver si tiene menos de 5 minutos de antigüedad
+  if (Date.now() - pendingTrace.timestamp > 5 * 60 * 1000) {
+    pendingTrace = null
+    return res.json({ pending: false })
+  }
+  const data = pendingTrace
+  pendingTrace = null
+  console.log(`[Tracer Pull] Frontend recibió ${data.shapes.length} shapes`)
+  res.json({ pending: true, ...data })
+})
+
 // ─── RUTA: Render SVG desde shapes + zonas (motor headless) ──────────────────
 //
 //  Body esperado:
@@ -276,7 +338,23 @@ app.post('/api/door/trace', upload.single('photo'), async (req, res) => {
 //
 app.post('/api/render', (req, res) => {
   try {
-    const { width = 800, height = 1200, shapes: rawShapes = [], zones: rawZones = [], textures = [], realism: rawRealism = {} } = req.body
+    let { shapes: rawShapes = [] as any[], zones: rawZones = [] as any[], textures = [], realism: rawRealism = {} } = req.body
+    const { width = 800, height = 1200 } = req.body
+
+    // Expandir panels[] en shapes+zones con bevels automáticos
+    const panels = req.body.panels || []
+    if (Array.isArray(panels) && panels.length > 0) {
+      panels.forEach((p: any) => {
+        const bevel = p.bevel ?? 5
+        const tipo  = p.tipo  ?? 'vidrio'
+        const expanded = buildBeveledPanel(p.x, p.y, p.w || p.width, p.h || p.height, bevel, tipo)
+        const baseIdx = rawShapes.length
+        expanded.forEach((s: any, i: number) => {
+          rawShapes.push(s)
+          rawZones.push({ shapeIndex: baseIdx + i, tipo: s._tipo || 'madera' })
+        })
+      })
+    }
 
     if (!Array.isArray(rawShapes) || rawShapes.length === 0) {
       return res.status(400).json({ error: 'Se requiere al menos una forma en "shapes"' })

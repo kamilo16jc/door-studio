@@ -1,24 +1,30 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import axios from 'axios'
 import { useTracerStore } from '../../store/tracerStore'
 import { autoTraceFromSVG, autoTraceFromMasks, generateEdgePreview } from '../../lib/autoTrace'
-import { Wand2, Cpu, Eye, Check, X, RefreshCw, Layers } from 'lucide-react'
+import { Wand2, Cpu, Eye, Check, X, RefreshCw, Layers, Bot } from 'lucide-react'
 import { TracedShape } from '../../types'
 
 type Mode = 'idle' | 'running' | 'preview' | 'error'
+type Tab = 'potrace' | 'claude' | 'ai'
 
 export default function AutoTracer() {
   const {
     photoBackground, canvasWidth, canvasHeight,
-    addShape, shapes, clearAll
+    addShape, shapes, clearAll, setCanvasSize
   } = useTracerStore()
 
   const [mode, setMode] = useState<Mode>('idle')
   const [progress, setProgress] = useState('')
   const [detectedShapes, setDetectedShapes] = useState<TracedShape[]>([])
   const [edgePreview, setEdgePreview] = useState<string | null>(null)
-  const [useAI, setUseAI] = useState(false)
+  const [activeTab, setActiveTab] = useState<Tab>('potrace')
   const [error, setError] = useState('')
+
+  // Claude polling state
+  const [claudeStatus, setClaudeStatus] = useState<'idle' | 'polling' | 'received'>('idle')
+  const [claudeShapeCount, setClaudeShapeCount] = useState(0)
+  const pollingRef = useRef<NodeJS.Timeout | null>(null)
 
   const hasPhoto = !!photoBackground
 
@@ -92,6 +98,44 @@ export default function AutoTracer() {
     }
   }
 
+  // ─── Claude polling ──────────────────────────────────────────────────────────
+  const startClaudePolling = () => {
+    setClaudeStatus('polling')
+    pollingRef.current = setInterval(async () => {
+      try {
+        const res = await axios.get('/api/tracer/pull')
+        if (res.data.pending) {
+          clearInterval(pollingRef.current!)
+          pollingRef.current = null
+          setClaudeStatus('received')
+          const { shapes: incoming, zones, canvasWidth: cw, canvasHeight: ch } = res.data
+          if (cw && ch) setCanvasSize(cw, ch)
+          incoming.forEach((s: any) => addShape({
+            moduleType: s.moduleType || 'panel',
+            shapeType: s.shapeType || 'rect',
+            x: s.x ?? 0, y: s.y ?? 0,
+            width: s.width, height: s.height,
+            archHeight: s.archHeight,
+            chamferSize: s.chamferSize,
+            points: s.points, nodes: s.nodes,
+            closed: s.closed !== false,
+            rotation: s.rotation || 0,
+            svgPath: s.svgPath,
+            fill: '#8B5E3C', stroke: '#5C3A1E', strokeWidth: 1,
+          }))
+          setClaudeShapeCount(incoming.length)
+          setTimeout(() => setClaudeStatus('idle'), 3000)
+        }
+      } catch {}
+    }, 2000)
+  }
+
+  const stopClaudePolling = () => {
+    if (pollingRef.current) clearInterval(pollingRef.current)
+    pollingRef.current = null
+    setClaudeStatus('idle')
+  }
+
   // ─── Aceptar formas detectadas ───────────────────────────────────────────────
   const acceptShapes = () => {
     detectedShapes.forEach(shape => addShape({
@@ -135,121 +179,195 @@ export default function AutoTracer() {
         <span className="text-xs font-semibold text-amber-800">Auto-trazado</span>
       </div>
 
-      {/* Modo idle: opciones */}
-      {mode === 'idle' && (
-        <div className="space-y-2">
-          {/* Toggle local vs IA */}
-          <div className="flex gap-1 bg-white border border-amber-200 rounded p-0.5">
-            <button
-              onClick={() => setUseAI(false)}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded text-xs font-medium transition-all ${
-                !useAI ? 'bg-amber-500 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              <Cpu size={12}/> Potrace
-            </button>
-            <button
-              onClick={() => setUseAI(true)}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded text-xs font-medium transition-all ${
-                useAI ? 'bg-amber-500 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              <Wand2 size={12}/> Con IA
-            </button>
-          </div>
+      {/* Tab selector */}
+      <div className="flex gap-1 bg-white border border-amber-200 rounded p-0.5">
+        <button
+          onClick={() => setActiveTab('potrace')}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded text-xs font-medium transition-all ${
+            activeTab === 'potrace' ? 'bg-amber-500 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <Cpu size={12}/> Potrace
+        </button>
+        <button
+          onClick={() => setActiveTab('claude')}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded text-xs font-medium transition-all ${
+            activeTab === 'claude' ? 'bg-amber-500 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <Bot size={12}/> Claude
+        </button>
+        <button
+          onClick={() => setActiveTab('ai')}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded text-xs font-medium transition-all ${
+            activeTab === 'ai' ? 'bg-amber-500 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <Wand2 size={12}/> Con IA
+        </button>
+      </div>
 
-          <p className="text-xs text-amber-700">
-            {!useAI
-              ? 'Potrace convierte la foto en trazos vectoriales limpios (SVG). Rápido y preciso para puertas.'
-              : 'SAM (Segment Anything Model) de Meta detecta y traza cada región de la puerta automáticamente. ~40s.'
-            }
-          </p>
-
-          <button
-            onClick={useAI ? runAITrace : runLocalTrace}
-            className="w-full flex items-center justify-center gap-2 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded text-xs font-semibold transition-colors"
-          >
-            <Wand2 size={13}/>
-            {useAI ? 'Auto-trazar con IA' : 'Auto-trazar ahora'}
-          </button>
-        </div>
-      )}
-
-      {/* Modo running: progreso */}
-      {mode === 'running' && (
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <RefreshCw size={13} className="text-amber-600 animate-spin"/>
-            <span className="text-xs text-amber-700">{progress}</span>
-          </div>
-          <div className="w-full bg-amber-100 rounded-full h-1.5">
-            <div className="bg-amber-500 h-1.5 rounded-full animate-pulse w-2/3"/>
-          </div>
-        </div>
-      )}
-
-      {/* Modo preview: mostrar resultado */}
-      {mode === 'preview' && (
-        <div className="space-y-2">
-          {/* Preview de bordes */}
-          {edgePreview && (
-            <div className="relative rounded overflow-hidden border border-amber-200">
-              <img src={edgePreview} alt="Bordes detectados" className="w-full h-24 object-cover opacity-80"/>
-              <div className="absolute inset-0 flex items-center justify-center">
-                <span className="bg-black/60 text-white text-xs px-2 py-1 rounded-full flex items-center gap-1">
-                  <Eye size={10}/> Bordes detectados
-                </span>
+      {/* ── Potrace tab ── */}
+      {activeTab === 'potrace' && (
+        <>
+          {mode === 'idle' && (
+            <div className="space-y-2">
+              <p className="text-xs text-amber-700">
+                Potrace convierte la foto en trazos vectoriales limpios (SVG). Rápido y preciso para puertas.
+              </p>
+              <button
+                onClick={runLocalTrace}
+                className="w-full flex items-center justify-center gap-2 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded text-xs font-semibold transition-colors"
+              >
+                <Wand2 size={13}/> Auto-trazar ahora
+              </button>
+            </div>
+          )}
+          {mode === 'running' && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <RefreshCw size={13} className="text-amber-600 animate-spin"/>
+                <span className="text-xs text-amber-700">{progress}</span>
+              </div>
+              <div className="w-full bg-amber-100 rounded-full h-1.5">
+                <div className="bg-amber-500 h-1.5 rounded-full animate-pulse w-2/3"/>
               </div>
             </div>
           )}
+          {mode === 'preview' && renderPreview()}
+          {mode === 'error' && renderError()}
+        </>
+      )}
 
-          {/* Resumen */}
-          <div className="bg-white border border-amber-200 rounded p-2 space-y-1">
-            <p className="text-xs font-semibold text-gray-700 flex items-center gap-1.5">
-              <Layers size={12} className="text-amber-500"/>
-              {detectedShapes.length} formas detectadas
-            </p>
-            <div className="flex gap-3 text-xs text-gray-500">
-              <span>Marcos: <b className="text-amber-700">{marcoCount}</b></span>
-              <span>Paneles: <b className="text-amber-500">{panelCount}</b></span>
-            </div>
-          </div>
-
-          {detectedShapes.length === 0 && (
-            <p className="text-xs text-red-500">No se detectaron formas. Intenta con la opción IA o traza manualmente.</p>
+      {/* ── Claude tab ── */}
+      {activeTab === 'claude' && (
+        <div className="space-y-2">
+          {claudeStatus === 'idle' && (
+            <>
+              <p className="text-xs text-amber-700">
+                Activa para recibir el trazado de Claude automáticamente
+              </p>
+              <button
+                onClick={startClaudePolling}
+                className="w-full flex items-center justify-center gap-2 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded text-xs font-semibold transition-colors"
+              >
+                <Bot size={13}/> Activar
+              </button>
+            </>
           )}
-
-          {/* Botones aceptar / cancelar */}
-          <div className="flex gap-1.5">
-            <button
-              onClick={acceptShapes}
-              disabled={detectedShapes.length === 0}
-              className="flex-1 flex items-center justify-center gap-1.5 py-1.5 bg-green-500 hover:bg-green-600 disabled:opacity-40 text-white rounded text-xs font-semibold transition-colors"
-            >
-              <Check size={12}/> Aceptar
-            </button>
-            <button
-              onClick={cancelPreview}
-              className="flex-1 flex items-center justify-center gap-1.5 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded text-xs font-semibold transition-colors"
-            >
-              <X size={12}/> Cancelar
-            </button>
-          </div>
+          {claudeStatus === 'polling' && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="inline-block w-2 h-2 rounded-full bg-amber-500 animate-pulse"/>
+                <span className="text-xs text-amber-700">Esperando trazado de Claude...</span>
+              </div>
+              <button
+                onClick={stopClaudePolling}
+                className="w-full flex items-center justify-center gap-2 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded text-xs font-medium transition-colors"
+              >
+                <X size={12}/> Detener
+              </button>
+            </div>
+          )}
+          {claudeStatus === 'received' && (
+            <div className="flex items-center gap-2 text-green-700 text-xs font-semibold">
+              <Check size={14} className="text-green-500"/>
+              ¡Trazado recibido! {claudeShapeCount} formas cargadas
+            </div>
+          )}
         </div>
       )}
 
-      {/* Modo error */}
-      {mode === 'error' && (
-        <div className="space-y-2">
-          <p className="text-xs text-red-600">{error}</p>
-          <button
-            onClick={retry}
-            className="w-full py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-xs font-medium transition-colors"
-          >
-            Intentar de nuevo
-          </button>
-        </div>
+      {/* ── Con IA tab ── */}
+      {activeTab === 'ai' && (
+        <>
+          {mode === 'idle' && (
+            <div className="space-y-2">
+              <p className="text-xs text-amber-700">
+                SAM (Segment Anything Model) de Meta detecta y traza cada región de la puerta automáticamente. ~40s.
+              </p>
+              <button
+                onClick={runAITrace}
+                className="w-full flex items-center justify-center gap-2 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded text-xs font-semibold transition-colors"
+              >
+                <Wand2 size={13}/> Auto-trazar con IA
+              </button>
+            </div>
+          )}
+          {mode === 'running' && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <RefreshCw size={13} className="text-amber-600 animate-spin"/>
+                <span className="text-xs text-amber-700">{progress}</span>
+              </div>
+              <div className="w-full bg-amber-100 rounded-full h-1.5">
+                <div className="bg-amber-500 h-1.5 rounded-full animate-pulse w-2/3"/>
+              </div>
+            </div>
+          )}
+          {mode === 'preview' && renderPreview()}
+          {mode === 'error' && renderError()}
+        </>
       )}
     </div>
   )
+
+  function renderPreview() {
+    return (
+      <div className="space-y-2">
+        {edgePreview && (
+          <div className="relative rounded overflow-hidden border border-amber-200">
+            <img src={edgePreview} alt="Bordes detectados" className="w-full h-24 object-cover opacity-80"/>
+            <div className="absolute inset-0 flex items-center justify-center">
+              <span className="bg-black/60 text-white text-xs px-2 py-1 rounded-full flex items-center gap-1">
+                <Eye size={10}/> Bordes detectados
+              </span>
+            </div>
+          </div>
+        )}
+        <div className="bg-white border border-amber-200 rounded p-2 space-y-1">
+          <p className="text-xs font-semibold text-gray-700 flex items-center gap-1.5">
+            <Layers size={12} className="text-amber-500"/>
+            {detectedShapes.length} formas detectadas
+          </p>
+          <div className="flex gap-3 text-xs text-gray-500">
+            <span>Marcos: <b className="text-amber-700">{marcoCount}</b></span>
+            <span>Paneles: <b className="text-amber-500">{panelCount}</b></span>
+          </div>
+        </div>
+        {detectedShapes.length === 0 && (
+          <p className="text-xs text-red-500">No se detectaron formas. Intenta con la opción IA o traza manualmente.</p>
+        )}
+        <div className="flex gap-1.5">
+          <button
+            onClick={acceptShapes}
+            disabled={detectedShapes.length === 0}
+            className="flex-1 flex items-center justify-center gap-1.5 py-1.5 bg-green-500 hover:bg-green-600 disabled:opacity-40 text-white rounded text-xs font-semibold transition-colors"
+          >
+            <Check size={12}/> Aceptar
+          </button>
+          <button
+            onClick={cancelPreview}
+            className="flex-1 flex items-center justify-center gap-1.5 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded text-xs font-semibold transition-colors"
+          >
+            <X size={12}/> Cancelar
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  function renderError() {
+    return (
+      <div className="space-y-2">
+        <p className="text-xs text-red-600">{error}</p>
+        <button
+          onClick={retry}
+          className="w-full py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-xs font-medium transition-colors"
+        >
+          Intentar de nuevo
+        </button>
+      </div>
+    )
+  }
 }
