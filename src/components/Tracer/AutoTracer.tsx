@@ -39,11 +39,21 @@ export default function AutoTracer() {
     if (!file) return
     const isSvg = file.type === 'image/svg+xml' || /\.svg$/i.test(file.name)
     setInputIsVector(isSvg)
-    setPhotoBackground(URL.createObjectURL(file))
+    const url = URL.createObjectURL(file)
+    setPhotoBackground(url)
     setActiveTab('regions')
     setMode('idle'); setError('')
     setDetectedShapes([]); setEdgePreview(null)
     e.target.value = ''
+    // Ajustar el canvas a las proporciones reales de la imagen para que el
+    // fondo no se vea achatado/deformado mientras se previsualiza.
+    const img = new Image()
+    img.onload = () => {
+      const MAX = 1400
+      const s = Math.min(1, MAX / Math.max(img.naturalWidth, img.naturalHeight))
+      setCanvasSize(Math.round(img.naturalWidth * s), Math.round(img.naturalHeight * s))
+    }
+    img.src = url
   }
 
   // ─── Auto-trazar con Potrace (vectorización local vía servidor) ─────────────
