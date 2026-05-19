@@ -323,7 +323,12 @@ export async function autoTraceRegions(
   for (const [label, comp] of sorted) {
     const bW = comp.maxX - comp.minX
     const bH = comp.maxY - comp.minY
-    if (bW < 4 || bH < 4) continue
+    if (bW < 8 || bH < 8) continue
+    // Filtrar tiras muy delgadas (moldings entre líneas dobles) - no son paneles reales
+    const aspect = bW / bH
+    if (aspect < 0.12 || aspect > 8.5) continue
+    // Filtrar si la dimensión mínima es muy pequeña en valor absoluto
+    if (Math.min(bW, bH) < canvasW * 0.015) continue
 
     const kind = classifyShape(comp)
 
