@@ -374,20 +374,20 @@ export async function autoTraceRegions(
   for (const [label, comp] of sorted) {
     const bW = comp.maxX - comp.minX
     const bH = comp.maxY - comp.minY
-    if (bW < 8 || bH < 8) continue
-    // Filtrar tiras muy delgadas (moldings entre líneas dobles) - no son paneles reales
-    const aspect = bW / bH
-    if (aspect < 0.12 || aspect > 8.5) continue
-    if (Math.min(bW, bH) < canvasW * 0.015) continue
+    if (bW < 6 || bH < 6) continue
+    // NOTA: sin filtro de aspecto. Todas las regiones cerradas son zonas
+    // válidas de la puerta (marcos, miembros, biseles, paneles). El filtro
+    // de aspecto antiguo eliminaba ~2/3 de las regiones legítimas.
 
     // ── 1. Trazar el contorno REAL ordenado (Moore-neighbor) ────────────────
     const contour = traceBoundary(labels, label, canvasW, canvasH, comp.startX, comp.startY)
     if (contour.length < 12) continue  // 6 puntos mínimo
 
-    // ── 2. Simplificar con Douglas-Peucker (epsilon adaptativo) ─────────────
-    // epsilon proporcional al tamaño: bordes rectos colapsan a pocos puntos,
-    // bordes curvos conservan suficiente detalle
-    const epsilon = Math.max(1.8, Math.min(bW, bH) * 0.025)
+    // ── 2. Simplificar con Douglas-Peucker (epsilon FIJO pequeño) ──────────
+    // epsilon=2px: los bordes rectos colapsan a sus esquinas exactas (verificado:
+    // un rectángulo → 5 puntos), las curvas conservan ~20-43 puntos suaves.
+    // Un epsilon proporcional al bbox destrozaba las tiras delgadas cóncavas.
+    const epsilon = 2.0
     const simplified = dpSimplify(contour, epsilon)
     if (simplified.length < 6) continue
 
