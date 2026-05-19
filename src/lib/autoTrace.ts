@@ -435,13 +435,25 @@ export async function autoTraceRegions(
     const contour = traceBoundary(labels, label, canvasW, canvasH, comp.startX, comp.startY)
     if (contour.length < 8) continue
 
-    // ── 2. Suavizar + remuestrear denso → curvas lisas sin facetas ──────────
-    const smoothed = smoothContour(contour, 9)
-    const dense = resampleContour(smoothed, 6)
-    if (dense.length < 8) continue
+    // ── 2. Clasificar poligonal vs curvo ────────────────────────────────────
+    // DP con epsilon 2: una forma poligonal (rect, trapecio, bisel) colapsa
+    // a pocos puntos; una forma curva (arco, abanico) conserva muchos.
+    const dpRaw = dpSimplify(contour, 2.0)
+    const isCurved = dpRaw.length / 2 > 14
 
-    // ── 3. Clasificar (usa versión simplificada solo para detectar el tipo) ──
-    const simplified = dpSimplify(dense, 2.5)
+    // ── 3. Generar el contorno final según el tipo ──────────────────────────
+    // Poligonal → DP filoso (esquinas rectas exactas).
+    // Curvo → suavizado + remuestreo denso (curvas lisas sin facetas).
+    let outline: number[]
+    if (isCurved) {
+      outline = resampleContour(smoothContour(contour, 9), 6)
+    } else {
+      outline = dpRaw
+    }
+    if (outline.length < 8) continue
+
+    // ── 4. Detectar primitiva (rect/elipse/polígono) ────────────────────────
+    const simplified = isCurved ? dpSimplify(outline, 2.5) : dpRaw
     const prim = detectPrimitive(simplified, comp)
 
     if (prim.kind === 'rect') {
@@ -464,14 +476,13 @@ export async function autoTraceRegions(
         fill: '', stroke: '#3B82F6', strokeWidth: 1.5
       })
     } else {
-      // Polígono curvo/irregular → usa los puntos DENSOS suavizados.
-      // Polilínea densa = curvas lisas; los bordes rectos quedan rectos igual.
+      // Polígono: poligonal → contorno DP filoso; curvo → denso suavizado.
       shapes.push({
         id: uuidv4(),
         moduleType: 'panel' as ModuleType,
         shapeType: 'polygon',
         x: 0, y: 0,
-        points: dense,
+        points: outline,
         closed: true,
         fill: '', stroke: '#3B82F6', strokeWidth: 1.5
       })
