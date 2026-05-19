@@ -4,6 +4,9 @@ import multer from 'multer'
 import path from 'path'
 import fs from 'fs'
 import Replicate from 'replicate'
+import { v4 as uuidv4 } from 'uuid'
+import { generateSVG } from './src/lib/svgExport'
+import type { TracedShape, Zone, Texture, RealismSettings, ZoneTipo } from './src/types'
 
 // potrace usa binarios nativos — import lazy para no crashear en Vercel si no está disponible
 let _potrace: typeof import('potrace') | null = null
@@ -251,6 +254,87 @@ app.post('/api/door/trace', upload.single('photo'), async (req, res) => {
     })
   } catch (err: any) {
     console.error('[Potrace Error]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── RUTA: Render SVG desde shapes + zonas (motor headless) ──────────────────
+//
+//  Body esperado:
+//  {
+//    width:   number,              // ancho del canvas (ej. 800)
+//    height:  number,              // alto del canvas (ej. 1200)
+//    shapes:  ShapeInput[],        // array de formas (sin id, sin fill/stroke)
+//    zones:   ZoneInput[],         // array de zonas por índice de shape
+//    textures?: Texture[],         // opcional — texturas a aplicar
+//    realism?:  Partial<RealismSettings>  // opcional — ajustes de realismo
+//  }
+//
+//  ShapeInput: { shapeType, moduleType, x, y, width?, height?, archHeight?,
+//               chamferSize?, points?, nodes?, closed?, rotation?, svgPath? }
+//  ZoneInput:  { shapeIndex: number, tipo: ZoneTipo, label?: string }
+//
+app.post('/api/render', (req, res) => {
+  try {
+    const { width = 800, height = 1200, shapes: rawShapes = [], zones: rawZones = [], textures = [], realism: rawRealism = {} } = req.body
+
+    if (!Array.isArray(rawShapes) || rawShapes.length === 0) {
+      return res.status(400).json({ error: 'Se requiere al menos una forma en "shapes"' })
+    }
+
+    // Generar IDs para cada shape y completar campos requeridos
+    const shapes: TracedShape[] = rawShapes.map((s: any) => ({
+      id:          uuidv4(),
+      moduleType:  s.moduleType  || 'panel',
+      shapeType:   s.shapeType   || 'rect',
+      x:           s.x           ?? 0,
+      y:           s.y           ?? 0,
+      width:       s.width,
+      height:      s.height,
+      radiusX:     s.radiusX,
+      radiusY:     s.radiusY,
+      archHeight:  s.archHeight,
+      chamferSize: s.chamferSize,
+      points:      s.points,
+      nodes:       s.nodes,
+      closed:      s.closed !== false,
+      rotation:    s.rotation    || 0,
+      svgPath:     s.svgPath,
+      fill:        '#8B5E3C',
+      stroke:      '#5C3A1E',
+      strokeWidth: 1,
+    }))
+
+    // Construir zonas referenciando los IDs generados
+    const zones: Zone[] = rawZones
+      .filter((z: any) => z.shapeIndex >= 0 && z.shapeIndex < shapes.length)
+      .map((z: any) => ({
+        id:      uuidv4(),
+        shapeId: shapes[z.shapeIndex].id,
+        tipo:    (z.tipo || 'madera') as ZoneTipo,
+        label:   z.label || z.tipo || 'madera',
+      }))
+
+    // Valores por defecto de realismo
+    const realism: RealismSettings = {
+      lightAngle:       rawRealism.lightAngle       ?? 45,
+      lightIntensity:   rawRealism.lightIntensity   ?? 0.7,
+      shadowDepth:      rawRealism.shadowDepth      ?? 0.5,
+      moldureDepth:     rawRealism.moldureDepth     ?? 0.4,
+      finish:           rawRealism.finish           ?? 'satinado',
+      ambientOcclusion: rawRealism.ambientOcclusion ?? 0.6,
+      glassOpacity:     rawRealism.glassOpacity     ?? 0.15,
+      glassBlur:        rawRealism.glassBlur        ?? 4,
+      glassReflection:  rawRealism.glassReflection  ?? 0.8,
+    }
+
+    const svg = generateSVG({ shapes, zones, textures: textures as Texture[], realism, width, height })
+
+    console.log(`[Render] SVG generado — ${shapes.length} shapes, ${zones.length} zonas, ${Math.round(svg.length / 1024)}KB`)
+
+    res.json({ success: true, svg, shapeCount: shapes.length, zoneCount: zones.length })
+  } catch (err: any) {
+    console.error('[Render Error]', err.message)
     res.status(500).json({ error: err.message })
   }
 })
