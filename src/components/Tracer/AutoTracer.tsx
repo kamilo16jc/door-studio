@@ -11,7 +11,7 @@ type Tab = 'potrace' | 'claude' | 'ai' | 'regions'
 export default function AutoTracer() {
   const {
     photoBackground, canvasWidth, canvasHeight,
-    addShape, shapes, clearAll, setCanvasSize
+    addShape, shapes, clearAll, setCanvasSize, setPhotoBackground
   } = useTracerStore()
 
   const [mode, setMode] = useState<Mode>('idle')
@@ -27,6 +27,19 @@ export default function AutoTracer() {
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
 
   const hasPhoto = !!photoBackground
+
+  // ─── Cargar archivo (SVG vectorial o imagen raster) ────────────────────────
+  // Un SVG es input ideal: líneas perfectamente nítidas sin ruido.
+  // URL.createObjectURL funciona como src de <img> tanto para SVG como raster.
+  const handleFileLoad = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setPhotoBackground(URL.createObjectURL(file))
+    setActiveTab('regions')
+    setMode('idle'); setError('')
+    setDetectedShapes([]); setEdgePreview(null)
+    e.target.value = ''
+  }
 
   // ─── Auto-trazar con Potrace (vectorización local vía servidor) ─────────────
   const runLocalTrace = async () => {
@@ -205,8 +218,14 @@ export default function AutoTracer() {
   const panelCount = detectedShapes.filter(s => s.moduleType === 'panel').length
 
   if (!hasPhoto) return (
-    <div className="border border-dashed border-gray-200 rounded-lg p-3 text-center">
-      <p className="text-xs text-gray-400">Carga una foto primero para usar el auto-trazado</p>
+    <div className="border border-dashed border-amber-200 bg-amber-50 rounded-lg p-3 space-y-2 text-center">
+      <p className="text-xs text-amber-700">
+        Carga un SVG vectorial o una imagen para auto-trazar las zonas
+      </p>
+      <label className="w-full flex items-center justify-center gap-2 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded text-xs font-semibold transition-colors cursor-pointer">
+        <ScanSearch size={13}/> Cargar SVG / imagen
+        <input type="file" accept=".svg,image/svg+xml,image/*" onChange={handleFileLoad} className="hidden"/>
+      </label>
     </div>
   )
 
@@ -259,7 +278,7 @@ export default function AutoTracer() {
           {mode === 'idle' && (
             <div className="space-y-2">
               <p className="text-xs text-amber-700">
-                Detecta cada región cerrada de la imagen como una forma independiente. Ideal para puertas con paneles.
+                Detecta cada región cerrada como una zona independiente. Un SVG vectorial da el mejor resultado.
               </p>
               <button
                 onClick={runRegionsTrace}
@@ -267,6 +286,10 @@ export default function AutoTracer() {
               >
                 <ScanSearch size={13}/> Detectar regiones
               </button>
+              <label className="w-full flex items-center justify-center gap-2 py-1.5 bg-white border border-amber-300 hover:bg-amber-100 text-amber-700 rounded text-xs font-medium transition-colors cursor-pointer">
+                <RefreshCw size={12}/> Cargar otro SVG / imagen
+                <input type="file" accept=".svg,image/svg+xml,image/*" onChange={handleFileLoad} className="hidden"/>
+              </label>
             </div>
           )}
           {mode === 'running' && (
