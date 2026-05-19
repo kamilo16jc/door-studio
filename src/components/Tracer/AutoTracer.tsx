@@ -26,6 +26,9 @@ export default function AutoTracer() {
   const [claudeShapeCount, setClaudeShapeCount] = useState(0)
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
 
+  // ¿El input cargado es un SVG vectorial? → rasterizar a alta resolución
+  const [inputIsVector, setInputIsVector] = useState(false)
+
   const hasPhoto = !!photoBackground
 
   // ─── Cargar archivo (SVG vectorial o imagen raster) ────────────────────────
@@ -34,6 +37,8 @@ export default function AutoTracer() {
   const handleFileLoad = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
+    const isSvg = file.type === 'image/svg+xml' || /\.svg$/i.test(file.name)
+    setInputIsVector(isSvg)
     setPhotoBackground(URL.createObjectURL(file))
     setActiveTab('regions')
     setMode('idle'); setError('')
@@ -127,10 +132,20 @@ export default function AutoTracer() {
         img.onerror = reject
         img.src = photoBackground
       })
-      const MAX = 2000
-      const scale = Math.min(1, MAX / Math.max(dims.w, dims.h))
-      const tw = Math.round(dims.w * scale)
-      const th = Math.round(dims.h * scale)
+      // SVG vectorial → rasterizar a ALTA resolución (es sin pérdida, da
+      // bordes mucho más nítidos). Imagen raster → tamaño nativo (capado).
+      let tw: number, th: number
+      if (inputIsVector) {
+        const TARGET = 3000  // lado mayor objetivo
+        const s = TARGET / Math.max(dims.w, dims.h)
+        tw = Math.round(dims.w * s)
+        th = Math.round(dims.h * s)
+      } else {
+        const MAX = 2000
+        const s = Math.min(1, MAX / Math.max(dims.w, dims.h))
+        tw = Math.round(dims.w * s)
+        th = Math.round(dims.h * s)
+      }
       // Ajustar el canvas para que coincida con la imagen (sin deformar)
       setCanvasSize(tw, th)
 
