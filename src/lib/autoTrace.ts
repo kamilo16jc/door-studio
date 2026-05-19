@@ -345,10 +345,12 @@ export async function autoTraceRegions(
   const background = floodFill(sealed, canvasW, canvasH, seeds)
 
   onProgress?.('Aislando regiones cerradas...')
-  // Usar el binary original (sin dilatar) para las regiones — más preciso
+  // CLAVE: usar el binary SELLADO (con líneas dilatadas) para las regiones.
+  // Si se usa el binary original, las regiones se fugan por los micro-gaps
+  // de 1-2px en los cruces de líneas y se fusionan unas con otras.
   const enclosed = new Uint8Array(canvasW * canvasH)
   for (let i = 0; i < enclosed.length; i++) {
-    enclosed[i] = binary[i] && !background[i] ? 1 : 0
+    enclosed[i] = sealed[i] && !background[i] ? 1 : 0
   }
 
   onProgress?.('Etiquetando componentes...')
@@ -446,7 +448,7 @@ export async function generateEdgePreview(src: string, w: number, h: number): Pr
   const bg       = floodFill(sealed, w, h, seeds)
   const enclosed = new Uint8Array(w * h)
   for (let i = 0; i < enclosed.length; i++)
-    enclosed[i] = binary[i] && !bg[i] ? 1 : 0
+    enclosed[i] = sealed[i] && !bg[i] ? 1 : 0
 
   const labels = labelComponents(enclosed, w, h)
   const comps  = collectBBoxes(labels, w, h)
