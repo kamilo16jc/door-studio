@@ -146,6 +146,71 @@ function collectBBoxes(labels: Int32Array, w: number, h: number): Map<number, Co
   return comps
 }
 
+// ─── Recolectar todos los píxeles del borde de un componente ─────────────────
+// Escanea columnas (top/bottom) y filas (left/right) para cubrir todos los bordes
+function getBoundaryPixels(labels: Int32Array, label: number, w: number, h: number,
+                           bbox: CompInfo, step = 2): number[] {
+  const pts: number[] = []
+  for (let x = bbox.minX; x <= bbox.maxX; x += step) {
+    let top = -1, bot = -1
+    for (let y = bbox.minY; y <= bbox.maxY; y++) {
+      if (labels[y * w + x] === label) { if (top < 0) top = y; bot = y }
+    }
+    if (top >= 0) { pts.push(x, top); if (bot !== top) pts.push(x, bot) }
+  }
+  for (let y = bbox.minY; y <= bbox.maxY; y += step) {
+    let left = -1, right = -1
+    for (let x = bbox.minX; x <= bbox.maxX; x++) {
+      if (labels[y * w + x] === label) { if (left < 0) left = x; right = x }
+    }
+    if (left >= 0) { pts.push(left, y); if (right !== left) pts.push(right, y) }
+  }
+  return pts
+}
+
+// ─── Convex Hull (Andrew's monotone chain) ────────────────────────────────────
+// Elimina artefactos triangulares y picos — da líneas perfectamente limpias
+function convexHull(pts: number[]): number[] {
+  type P = [number, number]
+  const n = pts.length / 2
+  if (n < 3) return pts
+
+  const raw: P[] = []
+  for (let i = 0; i < n; i++) raw.push([pts[i * 2], pts[i * 2 + 1]])
+
+  // Deduplicar
+  const seen = new Set<string>()
+  const points = raw.filter(([x, y]) => {
+    const k = `${x},${y}`; if (seen.has(k)) return false; seen.add(k); return true
+  })
+  if (points.length < 3) {
+    const r: number[] = []; points.forEach(([x, y]) => r.push(x, y)); return r
+  }
+
+  points.sort((a, b) => a[0] - b[0] || a[1] - b[1])
+
+  const cross = (O: P, A: P, B: P) =>
+    (A[0]-O[0]) * (B[1]-O[1]) - (A[1]-O[1]) * (B[0]-O[0])
+
+  const lower: P[] = []
+  for (const p of points) {
+    while (lower.length >= 2 && cross(lower[lower.length-2], lower[lower.length-1], p) <= 0)
+      lower.pop()
+    lower.push(p)
+  }
+  const upper: P[] = []
+  for (const p of [...points].reverse()) {
+    while (upper.length >= 2 && cross(upper[upper.length-2], upper[upper.length-1], p) <= 0)
+      upper.pop()
+    upper.push(p)
+  }
+  lower.pop(); upper.pop()
+
+  const result: number[] = []
+  for (const [x, y] of [...lower, ...upper]) result.push(x, y)
+  return result
+}
+
 // ─── Clasificar forma de un componente ───────────────────────────────────────
 // Retorna: 'rect' | 'ellipse' | 'polygon'
 // NOTA: Un semicírculo tiene fill ratio ≈ π/4 ≈ 0.785 — NO es rect
@@ -159,66 +224,16 @@ function classifyShape(comp: CompInfo): 'rect' | 'ellipse' | 'polygon' {
   // Rect: casi perfecto ≥ 0.90
   if (fill >= 0.90) return 'rect'
 
-  // Ellipse completa: fill ≈ π/4 = 0.785 → rango [0.68, 0.90)
-  // Semicírculo (arco): fill ≈ π/4 en su bbox → mismo rango
-  if (fill >= 0.62 && fill < 0.90) {
-    // Verificar con fórmula de elipse: pixeles_esperados ≈ π * rX * rY
+  // Ellipse: verificar con fórmula π*rX*rY — cubre círculos, óvalos y semicírculos
+  if (fill >= 0.55 && fill < 0.90) {
     const rX = bW / 2, rY = bH / 2
     const ellipseArea = Math.PI * rX * rY
     const ratio = comp.count / ellipseArea
     // ratio ≈ 1.0 = elipse completa, ≈ 0.5 = media elipse (arco)
-    if (ratio >= 0.40 && ratio <= 1.15) return 'ellipse'
+    if (ratio >= 0.38 && ratio <= 1.15) return 'ellipse'
   }
 
   return 'polygon'
-}
-
-// ─── Trazar contorno mejorado (scan horizontal + vertical combinado) ──────────
-function traceContour(labels: Int32Array, label: number, w: number, h: number,
-                      bbox: CompInfo, step = 2): number[] {
-  // Top/Bottom por columna (captura curvas horizontales como arcos)
-  const topPts: [number, number][] = []
-  const botPts: [number, number][] = []
-  for (let x = bbox.minX; x <= bbox.maxX; x += step) {
-    let top = -1, bot = -1
-    for (let y = bbox.minY; y <= bbox.maxY; y++) {
-      if (labels[y * w + x] === label) { if (top < 0) top = y; bot = y }
-    }
-    if (top >= 0) { topPts.push([x, top]); botPts.push([x, bot]) }
-  }
-
-  // Left/Right por fila (captura curvas verticales como arcos laterales)
-  const leftPts: [number, number][] = []
-  const rightPts: [number, number][] = []
-  for (let y = bbox.minY; y <= bbox.maxY; y += step) {
-    let left = -1, right = -1
-    for (let x = bbox.minX; x <= bbox.maxX; x++) {
-      if (labels[y * w + x] === label) { if (left < 0) left = x; right = x }
-    }
-    if (left >= 0) { leftPts.push([left, y]); rightPts.push([right, y]) }
-  }
-
-  // Detectar si la forma tiene curvatura significativa en X vs Y
-  const topVariance = topPts.reduce((s, [, y]) => s + y, 0) / (topPts.length || 1)
-  const topDiff = topPts.reduce((s, [, y]) => s + Math.abs(y - topVariance), 0)
-  const leftVariance = leftPts.reduce((s, [x]) => s + x, 0) / (leftPts.length || 1)
-  const leftDiff = leftPts.reduce((s, [x]) => s + Math.abs(x - leftVariance), 0)
-
-  let pts: number[]
-  if (topDiff >= leftDiff) {
-    // Curvatura principalmente en top/bottom (ej. arco, semicírculo)
-    if (topPts.length < 2) return []
-    pts = []
-    for (const [x, y] of topPts) pts.push(x, y)
-    for (const [x, y] of [...botPts].reverse()) pts.push(x, y)
-  } else {
-    // Curvatura principalmente en lados izq/der
-    if (leftPts.length < 2) return []
-    pts = []
-    for (const [x, y] of leftPts) pts.push(x, y)
-    for (const [x, y] of [...rightPts].reverse()) pts.push(x, y)
-  }
-  return pts
 }
 
 // ─── Douglas-Peucker simplification ──────────────────────────────────────────
@@ -335,17 +350,18 @@ export async function autoTraceRegions(
         fill: '', stroke: '#3B82F6', strokeWidth: 1.5
       })
     } else {
-      // Región curva/irregular → trazar contorno real
-      const rawPts = traceContour(labels, label, canvasW, canvasH, comp, 2)
-      if (rawPts.length < 8) continue
-      const simplified = dpSimplify(rawPts, 1.5)  // epsilon menor = curvas más suaves
-      if (simplified.length < 8) continue
+      // Región curva/irregular → Convex Hull sobre píxeles del borde
+      // El convex hull elimina artefactos triangulares y picos completamente
+      const boundaryPts = getBoundaryPixels(labels, label, canvasW, canvasH, comp, 2)
+      if (boundaryPts.length < 8) continue
+      const hull = convexHull(boundaryPts)
+      if (hull.length < 8) continue
       shapes.push({
         id: uuidv4(),
         moduleType: 'panel' as ModuleType,
         shapeType: 'polygon',
         x: 0, y: 0,
-        points: simplified,
+        points: hull,
         closed: true,
         fill: '', stroke: '#3B82F6', strokeWidth: 1.5
       })
