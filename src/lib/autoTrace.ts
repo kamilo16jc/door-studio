@@ -214,6 +214,57 @@ function traceBoundary(
   return contour
 }
 
+// ─── Suavizar contorno (promedio móvil circular) ──────────────────────────────
+// Quita el escalerado de 1px del trazado de píxeles → curva genuinamente lisa.
+function smoothContour(pts: number[], win: number): number[] {
+  const n = pts.length / 2
+  const half = win >> 1
+  if (n < (half * 2 + 1) * 2) return pts
+  const cnt = half * 2 + 1
+  const out: number[] = []
+  for (let i = 0; i < n; i++) {
+    let sx = 0, sy = 0
+    for (let k = -half; k <= half; k++) {
+      const j = ((i + k) % n + n) % n
+      sx += pts[j * 2]; sy += pts[j * 2 + 1]
+    }
+    out.push(sx / cnt, sy / cnt)
+  }
+  return out
+}
+
+// ─── Remuestrear contorno a espaciado uniforme ────────────────────────────────
+// Polilínea densa y uniforme = curva lisa SIN facetas y SIN overshoot de spline.
+// DP+polilínea siempre facetea arcos (matemático); esto los deja lisos.
+function resampleContour(pts: number[], spacing: number): number[] {
+  const n = pts.length / 2
+  if (n < 3) return pts
+  const seg: number[] = []
+  let total = 0
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n
+    const d = Math.hypot(pts[j*2]-pts[i*2], pts[j*2+1]-pts[i*2+1])
+    seg.push(d); total += d
+  }
+  if (total < spacing * 3) return pts
+  const count = Math.max(8, Math.round(total / spacing))
+  const out: number[] = []
+  let segIdx = 0, segStart = 0
+  for (let i = 0; i < count; i++) {
+    const target = i * total / count
+    while (segIdx < n - 1 && segStart + seg[segIdx] < target) {
+      segStart += seg[segIdx]; segIdx++
+    }
+    const f = seg[segIdx] > 0 ? (target - segStart) / seg[segIdx] : 0
+    const a = segIdx, b = (segIdx + 1) % n
+    out.push(
+      pts[a*2] + f * (pts[b*2] - pts[a*2]),
+      pts[a*2+1] + f * (pts[b*2+1] - pts[a*2+1])
+    )
+  }
+  return out
+}
+
 // ─── Área de polígono (fórmula del cordón / shoelace) ─────────────────────────
 function polygonArea(pts: number[]): number {
   const n = pts.length / 2
@@ -382,20 +433,19 @@ export async function autoTraceRegions(
 
     // ── 1. Trazar el contorno REAL ordenado (Moore-neighbor) ────────────────
     const contour = traceBoundary(labels, label, canvasW, canvasH, comp.startX, comp.startY)
-    if (contour.length < 8) continue  // 4 puntos mínimo
+    if (contour.length < 8) continue
 
-    // ── 2. Simplificar con Douglas-Peucker (epsilon FIJO pequeño) ──────────
-    // epsilon=2px: los bordes rectos colapsan a sus esquinas exactas (verificado:
-    // un rectángulo → 5 puntos), las curvas conservan ~20-43 puntos suaves.
-    // Un epsilon proporcional al bbox destrozaba las tiras delgadas cóncavas.
-    const epsilon = 2.0
-    const simplified = dpSimplify(contour, epsilon)
-    if (simplified.length < 6) continue
+    // ── 2. Suavizar + remuestrear denso → curvas lisas sin facetas ──────────
+    const smoothed = smoothContour(contour, 9)
+    const dense = resampleContour(smoothed, 6)
+    if (dense.length < 8) continue
 
-    // ── 3. Detectar primitiva desde la geometría real del contorno ──────────
+    // ── 3. Clasificar (usa versión simplificada solo para detectar el tipo) ──
+    const simplified = dpSimplify(dense, 2.5)
     const prim = detectPrimitive(simplified, comp)
 
     if (prim.kind === 'rect') {
+      // Rectángulo → forma exacta y limpia desde el bbox
       shapes.push({
         id: uuidv4(),
         moduleType: 'panel' as ModuleType,
@@ -414,12 +464,14 @@ export async function autoTraceRegions(
         fill: '', stroke: '#3B82F6', strokeWidth: 1.5
       })
     } else {
+      // Polígono curvo/irregular → usa los puntos DENSOS suavizados.
+      // Polilínea densa = curvas lisas; los bordes rectos quedan rectos igual.
       shapes.push({
         id: uuidv4(),
         moduleType: 'panel' as ModuleType,
         shapeType: 'polygon',
         x: 0, y: 0,
-        points: prim.points,
+        points: dense,
         closed: true,
         fill: '', stroke: '#3B82F6', strokeWidth: 1.5
       })
