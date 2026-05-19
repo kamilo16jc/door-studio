@@ -359,8 +359,9 @@ export async function autoTraceRegions(
 
   onProgress?.(`${comps.size} regiones encontradas — filtrando...`)
 
-  // Reducido a 0.1% para capturar regiones pequeñas (piezas del abanico, etc.)
-  const minPixels = canvasW * canvasH * 0.001
+  // 0.02% del canvas — captura tiras de molding finas y cuñas pequeñas.
+  // Verificado: no genera ruido (el sellado de líneas ya evita falsas regiones).
+  const minPixels = canvasW * canvasH * 0.0002
   const maxPixels = canvasW * canvasH * 0.95
 
   const sorted = Array.from(comps.entries())
@@ -374,14 +375,14 @@ export async function autoTraceRegions(
   for (const [label, comp] of sorted) {
     const bW = comp.maxX - comp.minX
     const bH = comp.maxY - comp.minY
-    if (bW < 6 || bH < 6) continue
+    if (bW < 4 || bH < 4) continue
     // NOTA: sin filtro de aspecto. Todas las regiones cerradas son zonas
     // válidas de la puerta (marcos, miembros, biseles, paneles). El filtro
     // de aspecto antiguo eliminaba ~2/3 de las regiones legítimas.
 
     // ── 1. Trazar el contorno REAL ordenado (Moore-neighbor) ────────────────
     const contour = traceBoundary(labels, label, canvasW, canvasH, comp.startX, comp.startY)
-    if (contour.length < 12) continue  // 6 puntos mínimo
+    if (contour.length < 8) continue  // 4 puntos mínimo
 
     // ── 2. Simplificar con Douglas-Peucker (epsilon FIJO pequeño) ──────────
     // epsilon=2px: los bordes rectos colapsan a sus esquinas exactas (verificado:
