@@ -126,6 +126,28 @@ function labelComponents(binary: Uint8Array, w: number, h: number): Int32Array {
   return labels
 }
 
+// ─── Expandir regiones hasta el centro de las líneas ─────────────────────────
+// BFS multi-fuente: cada píxel de línea (no-fondo, sin etiqueta) toma la
+// etiqueta de la región MÁS CERCANA. Las regiones crecen hasta tocarse entre
+// sí en el centro de las líneas → las zonas tilean la puerta SIN huecos y
+// comparten bordes, igual que un trazado a mano.
+function expandLabels(labels: Int32Array, background: Uint8Array, w: number, h: number): void {
+  const queue: number[] = []
+  for (let i = 0; i < labels.length; i++) {
+    if (labels[i] >= 0) queue.push(i)
+  }
+  let head = 0
+  while (head < queue.length) {
+    const idx = queue[head++]
+    const l = labels[idx]
+    const x = idx % w, y = (idx / w) | 0
+    if (x > 0)   { const n = idx-1; if (labels[n] < 0 && !background[n]) { labels[n] = l; queue.push(n) } }
+    if (x < w-1) { const n = idx+1; if (labels[n] < 0 && !background[n]) { labels[n] = l; queue.push(n) } }
+    if (y > 0)   { const n = idx-w; if (labels[n] < 0 && !background[n]) { labels[n] = l; queue.push(n) } }
+    if (y < h-1) { const n = idx+w; if (labels[n] < 0 && !background[n]) { labels[n] = l; queue.push(n) } }
+  }
+}
+
 // ─── Recolectar bounding boxes por componente ─────────────────────────────────
 interface CompInfo {
   minX: number; maxX: number; minY: number; maxY: number; count: number
@@ -406,6 +428,11 @@ export async function autoTraceRegions(
 
   onProgress?.('Etiquetando componentes...')
   const labels = labelComponents(enclosed, canvasW, canvasH)
+
+  onProgress?.('Expandiendo zonas hasta el centro de las líneas...')
+  // Crecer cada región hasta tocar a sus vecinas → zonas sin huecos
+  expandLabels(labels, background, canvasW, canvasH)
+
   const comps  = collectBBoxes(labels, canvasW, canvasH)
 
   onProgress?.(`${comps.size} regiones encontradas — filtrando...`)
@@ -515,8 +542,9 @@ export async function generateEdgePreview(src: string, w: number, h: number): Pr
     enclosed[i] = sealed[i] && !bg[i] ? 1 : 0
 
   const labels = labelComponents(enclosed, w, h)
+  expandLabels(labels, bg, w, h)
   const comps  = collectBBoxes(labels, w, h)
-  const minPx  = w * h * 0.001  // mismo umbral que en autoTraceRegions
+  const minPx  = w * h * 0.0002  // mismo umbral que en autoTraceRegions
 
   const out = new ImageData(w, h)
   for (let i = 0; i < w * h; i++) {
